@@ -50,6 +50,7 @@ class Hypothesis:
     probs: dict = field(default_factory=dict)
     margin: float = 0.0
     command: Optional[str] = None           # None = "không phải lệnh"
+    swipe_probs: dict = field(default_factory=dict)  # xác suất GRU next/previous ở mọi khung (kể cả khi luật thắng) để gate dò mâu thuẫn hướng
 
 
 @dataclass(frozen=True)

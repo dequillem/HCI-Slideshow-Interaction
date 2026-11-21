@@ -12,9 +12,9 @@ def test_naive_has_no_gate():
     assert not g.require_arm and g.hold_ms == 0
 
 
-def test_adaptive_stricter_when_hand_moves_fast():
-    still = get_policy("adaptive")(Config(), Context(0, 0.0))
-    fast = get_policy("adaptive")(Config(), Context(0, 3.0))
+def test_adaptive_speed_stricter_when_hand_moves_fast():
+    still = get_policy("adaptive_speed")(Config(), Context(0, 0.0))
+    fast = get_policy("adaptive_speed")(Config(), Context(0, 3.0))
     assert fast.min_conf > still.min_conf and fast.hold_ms > still.hold_ms
 
 

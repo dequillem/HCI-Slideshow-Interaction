@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict, replace, fields
 
-POLICIES = ("naive", "fixed", "adaptive", "abstain", "combined", "swipe")
+POLICIES = ("naive", "fixed", "adaptive", "abstain", "combined", "swipe", "adaptive_speed")
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class Config:
     dry_run: bool = True
     log_dir: str = "sessions"
     window_ms: int = 150
+    require_arm: bool = True        # fixed/adaptive/abstain/combined có cần nắm tay ARM trước không (naive, swipe: không bao giờ)
     arm_hold_ms: int = 300
     armed_timeout_ms: int = 4000
     conf: float = 0.80
@@ -37,6 +38,17 @@ class Config:
     confirm_timeout_ms: int = 4000
     margin: float = 0.25
     uncertain_floor: float = 0.40
+    # adaptive / combined: ngưỡng theo độ mơ hồ (cùng tham số mặc định với HCI-project/src/policies.py)
+    adapt_min_conf: float = 0.70
+    adapt_max_conf: float = 0.95
+    margin_weight: float = 0.20
+    stability_weight: float = 0.15
+    stability_window_ms: int = 800  # độ ổn định tính trên chuỗi khung hợp lệ trong ngần này ms (~5 bước GRU, khớp hold_frames=5)
+    # abstain / combined: chưa chắc -> quan sát thêm tối đa abstain_wait_ms, vẫn không rõ -> từ chối
+    abstain_wait_ms: int = 600
+    clear_conf: float = 0.90        # dưới mức này (dù đã qua ngưỡng) coi là "chưa rõ", phải quan sát thêm
+    conflict_floor: float = 0.50    # vuốt chiều ngược có xác suất >= mức này trong cửa sổ gần đây = mâu thuẫn hướng
+    conflict_window_ms: int = 700
     speed_floor: float = 0.6
     speed_gain: float = 0.08
     max_boost: float = 0.15

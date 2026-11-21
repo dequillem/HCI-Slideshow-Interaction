@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -146,12 +147,13 @@ class HybridRecognizer:
         g = self.gru(fw)  # luôn gọi để GRU nhận đủ chuỗi, kể cả khung không có tay
         if not fw.hand:
             return Hypothesis(fw.t_ms, False, NONE_LABEL)
+        swipe = {c: g.probs.get(c, 0.0) for c in GRU_COMMANDS}  # gate cần cả xác suất dưới ngưỡng để dò mâu thuẫn hướng
         if g.label in GRU_COMMANDS and g.probs[g.label] >= self.cfg.gru_override:
-            return g
+            return replace(g, swipe_probs=swipe)
         r = self.rule(fw)
         if fw.speed > self.cfg.static_max_speed and r.label not in STATIC_KEEP:
-            return Hypothesis(fw.t_ms, True, NONE_LABEL, {NONE_LABEL: 1.0}, 1.0, None)
-        return r
+            return Hypothesis(fw.t_ms, True, NONE_LABEL, {NONE_LABEL: 1.0}, 1.0, None, swipe)
+        return replace(r, swipe_probs=swipe)
 
     def reset(self) -> None:
         self.gru.reset()
