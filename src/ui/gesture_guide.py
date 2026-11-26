@@ -30,6 +30,24 @@ GESTURES = [
 ]
 DEFAULT_CMD = {"swipe_left": "previous", "swipe_right": "next"}   # dùng khi config không có external_labels
 
+# ===== Bản tiếng Anh (bản tiếng Việt ở trên giữ nguyên; thêm ngôn ngữ nào thì thêm một bộ bảng như dưới đây) =====
+CMD_EN = {"next": "Next slide", "previous": "Previous slide", "play_pause": "Play / pause",
+          "start_show": "Start slideshow", "exit_show": "Exit slideshow"}
+GESTURES_EN = {
+    "swipe_left": {"title": "Swipe left", "how": "Open your hand and sweep it quickly from RIGHT to LEFT, then stop."},
+    "swipe_right": {"title": "Swipe right", "how": "Open your hand and sweep it quickly from LEFT to RIGHT, then stop."},
+    "like": {"title": "Like (start slideshow)", "how": "Make a fist with the thumb pointing UP and hold still for about 0.6 s.",
+             "command": "Start slideshow"},
+    "dislike": {"title": "Dislike (exit slideshow)", "how": "Make a fist with the thumb pointing DOWN and hold still for about 0.6 s.",
+                "command": "Exit slideshow"},
+}
+UI = {
+    "vi": {"step": "Cử chỉ {i} / {n}", "usage_name": "Cách dùng", "modes_name": "Chế độ lọc lệnh (C1–C4)",
+           "prev": "‹ Trước", "next": "Sau ›", "cmd": "Lệnh: "},
+    "en": {"step": "Gesture {i} / {n}", "usage_name": "How to use", "modes_name": "Command filter modes (C1–C4)",
+           "prev": "‹ Prev", "next": "Next ›", "cmd": "Command: "},
+}
+
 # Bộ lọc lệnh (Intent Gate policy): tag, tên ngắn, mô tả. C1–C4 chọn được bằng nút "Bộ lọc" trong giao diện.
 CHOICES = ("fixed", "adaptive", "abstain", "combined")
 MODE_INFO = {
@@ -47,14 +65,30 @@ MODE_INFO = {
 }
 
 
-def mode_list(current: str = None) -> list:
+MODE_INFO_EN = {
+    "fixed": ("C1", "Fixed threshold",
+              "Accepts a command when confidence reaches the threshold and the gesture is held long enough. Threshold and hold time never change."),
+    "adaptive": ("C2", "Adaptive threshold",
+                 "Like C1, but when the hand moves fast the threshold and hold time increase automatically, so false detections are rarer."),
+    "abstain": ("C3", "Fixed + abstention",
+                "Like C1, but when two gestures have close probabilities the system treats it as uncertain and ignores it."),
+    "combined": ("C4", "Adaptive + abstention",
+                 "Combines C2 and C3: the strictest, fewest false detections, but it misses more."),
+    "swipe": ("Default", "Direct swipe",
+              "No activation gesture needed: a swipe is accepted right away (very short hold), still with a confidence threshold and a cooldown."),
+    "naive": ("No filter", "No Intent Gate", "Baseline: accepts every command immediately, no checks."),
+}
+
+
+def mode_list(current: str = None, lang: str = "vi") -> list:
     """Các bộ lọc để chọn: C1–C4, cộng thêm bộ lọc đang đặt trong config nếu nó nằm ngoài C1–C4 (vd swipe mặc định)."""
     keys = list(CHOICES)
     if current and current not in CHOICES:
         keys.insert(0, current)
     out = []
     for k in keys:
-        tag, title, desc = MODE_INFO.get(k, ("Khác", k, ""))
+        info = MODE_INFO_EN if lang == "en" else MODE_INFO
+        tag, title, desc = info.get(k) or MODE_INFO.get(k, ("Khác" if lang != "en" else "Other", k, ""))
         out.append({"key": k, "tag": tag, "title": title, "desc": desc})
     return out
 
@@ -69,16 +103,36 @@ USAGE_TEXT = (
     "S bắt đầu / dừng · M tập / gửi thật · P bộ lọc lệnh · G hướng dẫn · C camera · ← → chuyển cử chỉ (tab Bộ cử chỉ)"
 )
 
+USAGE_TEXT_EN = (
+    "PRACTICE / LIVE mode (key M)\n"
+    "• PRACTICE: gestures are recognised but no keys are sent, use it to get familiar.\n"
+    "• LIVE: keys go to the currently selected window, so click the PowerPoint that is presenting.\n\n"
+    "Small status window (shown while running)\n"
+    "• Drag to move it, right-click to stop or change mode.\n\n"
+    "Shortcuts\n"
+    "S start / stop · M practice / live · P command filter · G guide · C camera · L language · ← → switch gesture (Gestures tab)"
+)
+
 TABS = (("usage", "Cách dùng"), ("gestures", "Bộ cử chỉ"), ("modes", "Chế độ"))   # ba nút ở đỉnh phần hướng dẫn
+TABS_EN = (("usage", "How to use"), ("gestures", "Gestures"), ("modes", "Modes"))
 TAB_ON, TAB_OFF = ("#3fa9f5", "white"), ("#e5e7eb", "black")                      # (nền, chữ) của tab đang chọn / không chọn
 
 
-def command_text(gesture: dict, labels: dict) -> str:
+def gesture_text(gesture: dict, lang: str = "vi") -> dict:
+    """Tiêu đề / cách làm / lệnh cố định của cử chỉ theo ngôn ngữ (thiếu bản dịch thì dùng tiếng Việt)."""
+    if lang == "en":
+        return {**gesture, **GESTURES_EN.get(gesture["key"], {})}
+    return gesture
+
+
+def command_text(gesture: dict, labels: dict, lang: str = "vi") -> str:
     """Dòng "Lệnh: ..." của một cử chỉ: lấy từ external_labels trong config (vuốt) hoặc ghi chú cố định (like/dislike)."""
-    if gesture.get("command"):
-        return "Lệnh: " + gesture["command"]
+    prefix, names = UI[lang]["cmd"], (CMD_EN if lang == "en" else CMD_VI)
+    g = gesture_text(gesture, lang)
+    if g.get("command"):
+        return prefix + g["command"]
     cmd = (labels or {}).get(gesture["key"]) or DEFAULT_CMD.get(gesture["key"])
-    return "Lệnh: " + CMD_VI.get(cmd, cmd) if cmd else ""
+    return prefix + names.get(cmd, cmd) if cmd else ""
 
 
 def pick_size(avail: int) -> int:
@@ -90,8 +144,8 @@ def pick_size(avail: int) -> int:
 class GuidePanel:
     """Khung hướng dẫn, nhúng vào cửa sổ cha. show()/hide() bật tắt; mở ra luôn ở tab "Cách dùng"; hide() dừng hoạt ảnh."""
 
-    def __init__(self, tk, parent, labels: dict = None, font: str = "TkDefaultFont", policy: str = None):
-        self.tk, self.labels, self.policy = tk, labels or {}, policy
+    def __init__(self, tk, parent, labels: dict = None, font: str = "TkDefaultFont", policy: str = None, lang: str = "vi"):
+        self.tk, self.labels, self.policy, self.lang = tk, labels or {}, policy, lang
         self.tab, self.idx, self.frame_i, self.size, self.visible, self._job = "usage", 0, 0, SIZES[0], False, None
         self.images = {}                          # giữ tham chiếu PhotoImage, nếu không Tk sẽ xóa ảnh
         card = COLOR["card"]
@@ -99,7 +153,7 @@ class GuidePanel:
         bar = tk.Frame(f, bg=card)                # ba nút chọn trang
         bar.pack(fill="x", padx=10, pady=(10, 0))
         self.tab_btns = {}
-        for col, (key, text) in enumerate(TABS):
+        for col, (key, text) in enumerate(TABS_EN if lang == "en" else TABS):
             bar.columnconfigure(col, weight=1, uniform="tab")
             b = tk.Button(bar, text=text, font=(font, 10, "bold"), bd=0, relief="flat", cursor="hand2", pady=6,
                           command=lambda k=key: self.select(k))
@@ -116,8 +170,10 @@ class GuidePanel:
         self.cmd = tk.Label(f, bg=card, fg="#2563eb", font=(font, 10, "bold"), wraplength=280, justify="center")
         self.cmd.pack(pady=(2, 0))
         self.nav = tk.Frame(f, bg=card)           # Trước / Sau: chỉ hiện ở tab Bộ cử chỉ
-        tk.Button(self.nav, text="‹ Trước", width=9, font=(font, 10), command=lambda: self.go(-1)).pack(side="left", padx=6)
-        tk.Button(self.nav, text="Sau ›", width=9, font=(font, 10), command=lambda: self.go(1)).pack(side="left", padx=6)
+        self.prev_btn = tk.Button(self.nav, text=UI[lang]["prev"], width=9, font=(font, 10), command=lambda: self.go(-1))
+        self.prev_btn.pack(side="left", padx=6)
+        self.next_btn = tk.Button(self.nav, text=UI[lang]["next"], width=9, font=(font, 10), command=lambda: self.go(1))
+        self.next_btn.pack(side="left", padx=6)
         f.bind("<Configure>", self._resize)
         top = parent.winfo_toplevel()
         top.bind("<Left>", self._arrow, add="+")      # phím ← → chuyển cử chỉ khi hướng dẫn đang hiện ở tab Bộ cử chỉ
@@ -126,6 +182,18 @@ class GuidePanel:
     def _arrow(self, event) -> None:
         if self.visible and self.tab == "gestures":
             self.go(-1 if event.keysym == "Left" else 1)
+
+    def set_lang(self, lang: str) -> None:
+        """Đổi ngôn ngữ ("vi" | "en"): cập nhật chữ trên 3 tab và nút Trước / Sau, rồi vẽ lại trang đang mở."""
+        if lang == self.lang:
+            return
+        self.lang = lang
+        for key, text in (TABS_EN if lang == "en" else TABS):
+            self.tab_btns[key].config(text=text)
+        self.prev_btn.config(text=UI[lang]["prev"])
+        self.next_btn.config(text=UI[lang]["next"])
+        if self.visible:
+            self._refresh()
 
     def set_policy(self, key: str) -> None:
         """Báo bộ lọc đang chọn để tab "Chế độ" đánh dấu."""
@@ -163,10 +231,12 @@ class GuidePanel:
 
     def _modes_text(self) -> str:
         lines = []
-        for m in mode_list(self.policy):
+        for m in mode_list(self.policy, self.lang):
             mark = "▶ " if m["key"] == self.policy else "    "
             lines.append(f"{mark}{m['tag']} · {m['title']}\n      {m['desc']}")
-        head = "C1–C4 cần làm cử chỉ kích hoạt (ARM) trước khi ra lệnh. Chọn bằng nút Bộ lọc (phím P), đổi được khi chưa bấm Bắt đầu.\n\n"
+        head = ("C1–C4 need an activation gesture (ARM) before a command. Pick one with the Filter button (key P); it can only be changed before pressing Start.\n\n"
+                if self.lang == "en" else
+                "C1–C4 cần làm cử chỉ kích hoạt (ARM) trước khi ra lệnh. Chọn bằng nút Bộ lọc (phím P), đổi được khi chưa bấm Bắt đầu.\n\n")
         return head + "\n\n".join(lines)
 
     def _refresh(self) -> None:
@@ -176,21 +246,21 @@ class GuidePanel:
             b.config(bg=bg, fg=fg, activebackground=bg, activeforeground=fg)
         self.frame_i = 0
         if self.tab == "gestures":
-            g = GESTURES[self.idx]
-            self.step.config(text=f"Cử chỉ {self.idx + 1} / {len(GESTURES)}")
+            g = gesture_text(GESTURES[self.idx], self.lang)
+            self.step.config(text=UI[self.lang]["step"].format(i=self.idx + 1, n=len(GESTURES)))
             self.name.config(text=g["title"])
             self.pic.pack(padx=12, pady=6, expand=True, before=self.how)
             self.how.config(text=g["how"], justify="center")
             self.how.pack_configure(anchor="center", fill="none")
-            self.cmd.config(text=command_text(g, self.labels))
+            self.cmd.config(text=command_text(GESTURES[self.idx], self.labels, self.lang))
             self.nav.pack(pady=8)
             self._draw()
             return
         self.step.config(text="")                 # tab chữ: ẩn ảnh và Trước / Sau, chữ canh trái
-        self.name.config(text="Cách dùng" if self.tab == "usage" else "Chế độ lọc lệnh (C1–C4)")
+        self.name.config(text=UI[self.lang]["usage_name" if self.tab == "usage" else "modes_name"])
         self.pic.pack_forget()
         self.nav.pack_forget()
-        self.how.config(text=USAGE_TEXT if self.tab == "usage" else self._modes_text(), justify="left")
+        self.how.config(text=(USAGE_TEXT_EN if self.lang == "en" else USAGE_TEXT) if self.tab == "usage" else self._modes_text(), justify="left")
         self.how.pack_configure(anchor="w", fill="x")
         self.cmd.config(text="")
 
