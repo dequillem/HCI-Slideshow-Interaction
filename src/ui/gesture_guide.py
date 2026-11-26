@@ -115,7 +115,8 @@ USAGE_TEXT_EN = (
 
 TABS = (("usage", "Cách dùng"), ("gestures", "Bộ cử chỉ"), ("modes", "Chế độ"))   # ba nút ở đỉnh phần hướng dẫn
 TABS_EN = (("usage", "How to use"), ("gestures", "Gestures"), ("modes", "Modes"))
-TAB_ON, TAB_OFF = ("#3fa9f5", "white"), ("#e5e7eb", "black")                      # (nền, chữ) của tab đang chọn / không chọn
+TAB_ACCENT = "#5b3df5"  # màu gạch nhấn dưới tab đang chọn
+TAB_TEXT = "#111827"
 
 
 def gesture_text(gesture: dict, lang: str = "vi") -> dict:
@@ -153,12 +154,21 @@ class GuidePanel:
         bar = tk.Frame(f, bg=card)                # ba nút chọn trang
         bar.pack(fill="x", padx=10, pady=(10, 0))
         self.tab_btns = {}
+        self.tab_indicators = {}
         for col, (key, text) in enumerate(TABS_EN if lang == "en" else TABS):
             bar.columnconfigure(col, weight=1, uniform="tab")
-            b = tk.Button(bar, text=text, font=(font, 10, "bold"), bd=0, relief="flat", cursor="hand2", pady=6,
+            cell = tk.Frame(bar, bg=card)
+            cell.grid(row=0, column=col, sticky="ew", padx=2)
+            cell.columnconfigure(0, weight=1)
+            b = tk.Button(cell, text=text, font=(font, 10, "bold"), bd=0, relief="flat",
+                          cursor="hand2", pady=8, bg=card, fg=TAB_TEXT,
+                          activebackground=card, activeforeground=TAB_ACCENT,
                           command=lambda k=key: self.select(k))
-            b.grid(row=0, column=col, sticky="ew", padx=2)
+            b.grid(row=0, column=0, sticky="ew")
+            indicator = tk.Frame(cell, bg=card, height=3)
+            indicator.grid(row=1, column=0, sticky="ew")
             self.tab_btns[key] = b
+            self.tab_indicators[key] = indicator
         self.step = tk.Label(f, bg=card, fg=COLOR["muted"], font=(font, 9))
         self.step.pack(pady=(8, 0))
         self.name = tk.Label(f, bg=card, fg=COLOR["text"], font=(font, 14, "bold"))
@@ -242,8 +252,10 @@ class GuidePanel:
     def _refresh(self) -> None:
         self._cancel()
         for key, b in self.tab_btns.items():
-            bg, fg = TAB_ON if key == self.tab else TAB_OFF
-            b.config(bg=bg, fg=fg, activebackground=bg, activeforeground=fg)
+            active = key == self.tab
+            b.config(bg=COLOR["card"], fg=TAB_ACCENT if active else TAB_TEXT,
+                     activebackground=COLOR["card"], activeforeground=TAB_ACCENT)
+            self.tab_indicators[key].config(bg=TAB_ACCENT if active else COLOR["card"])
         self.frame_i = 0
         if self.tab == "gestures":
             g = gesture_text(GESTURES[self.idx], self.lang)

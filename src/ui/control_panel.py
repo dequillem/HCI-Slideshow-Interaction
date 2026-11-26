@@ -14,9 +14,9 @@ W, H = 100, 150          # kích thước cửa sổ trạng thái
 BG, FG, MUTED = "#111827", "#f9fafb", "#cbd5e1"
 
 # ===== Cửa sổ điều khiển: hai trạng thái (thường / phóng to), nền vẽ trên một Canvas =====
-FONT = "El Messiri Regular"                
-FONT_BOLD = "El Messiri Bold"      
-FONT_ITALIC = "El Messiri Italic"
+FONT = "Lato Regular"                
+FONT_BOLD = "Lato Bold"      
+FONT_ITALIC = "Lato Italic"
 WIN_BG = "#eef2f7"                        # màu nền khi KHÔNG có ảnh nền
 TXT, TXT_MUTED, TXT_LINK = "#111827", "#4b5563", "#2563eb"    # màu chữ vẽ thẳng lên nền: đổi nếu ảnh nền tối
 NORMAL_SIZE = (440, 540)                  # cửa sổ thường, chưa bật hướng dẫn  -> ảnh nền bg_normal.png
@@ -24,9 +24,11 @@ GUIDE_SIZE = (880, 640)                   # cửa sổ thường, đang bật h�
 BTN_W, BTN_H = 340, 54                    # cỡ nút ở trạng thái thường; phóng to nhân với MAX_SCALE (476 x 76)
 MARGIN = 50                                # cách viền trên/trái của tiêu đề + nút ở cỡ thường và khi bật hướng dẫn
 HOVER_SHIFT = 5                           # nút nhích lên trái bấy nhiêu px khi hover (nhân theo tỉ lệ phóng to)
+EXTRUSION_DEPTH = 5
+EXTRUSION_COLOR = "#000000"
 BTN_PAD = 20                              # chữ trên nút cách mép trái bấy nhiêu px (nhân theo tỉ lệ phóng to)
 SMALL_H = 36 
-MAX_SCALE = 1.4
+MAX_SCALE = 1.2
 ASSETS = Path(__file__).parent / "assets"
 BG_DIR = ASSETS / "backgrounds"            # bg_normal.png | bg_guide.png | bg_max.png | background.png (dùng chung)
 BTN_DIR = ASSETS / "buttons"              # <tên>.png, <tên>_hover.png, <tên>_down.png, <tên>_off.png
@@ -367,6 +369,10 @@ class ControlApp:
         self.scale = 1.0
         self._images, self._layout_key, self._cfg_job, self._sync_job = {}, None, None, None
         self.bg_image = self.title_image = None
+        self.policy_popup = None
+        self._policy_popup_job = None
+        self.policy_menu_height = 0  # chiều cao đang mở; dùng để đẩy các nút phía dưới xuống
+        self.policy_menu_target = 0
         load_bundled_fonts()
         r = self.root = tk.Tk()
         r.title("HGISS")
@@ -443,7 +449,8 @@ class ControlApp:
     def _canvas_size(self):
         if self.maximized:
             return max(1, self.cv.winfo_width()), max(1, self.cv.winfo_height())
-        return GUIDE_SIZE if (self.guide and self.guide.visible) else NORMAL_SIZE
+        base = GUIDE_SIZE if (self.guide and self.guide.visible) else NORMAL_SIZE
+        return base[0], base[1] + self.policy_menu_height
 
     def _layout(self):
         """Thường: cột điều khiển ở giữa. Phóng to (chưa bật hướng dẫn): ở giữa và to hơn.
@@ -474,6 +481,8 @@ class ControlApp:
         for b in self.buttons:
             b.place(x0, y, bw, bh)
             y += bh + gap
+            if b is self.policy_btn and self.policy_menu_height:
+                y += self.policy_menu_height + round(5 * s)
         sw = (bw - gap) // 2                                        # 2 nút nhỏ chung một hàng, khít 2 mép của các nút trên
         self.cam_btn.place(x0, y, sw, sh)
         self.lang_btn.place(x0 + bw - sw, y, sw, sh)
@@ -653,6 +662,7 @@ class ControlApp:
             self.stop()
 
     def start(self):
+        self._close_policy_menu()
         cfg = self.cfg if self.policy == self.cfg.policy else self.cfg.with_policy(self.policy)
         if self.session_factory:
             self.session = self.session_factory(cfg, self.log, self.preview_var.get())
@@ -709,16 +719,133 @@ class ControlApp:
         return next(m for m in mode_list(self.cfg.policy, self.lang) if m["key"] == self.policy)
 
     def open_policy_menu(self):
-        """Bấm nút Bộ lọc: hiện danh sách chọn ngay dưới nút. Đang chạy thì không đổi (phải Dừng trước)."""
+        """Mở dropdown trượt xuống; các nút bên dưới được đẩy xuống cùng danh sách."""
         if self.session:
             return
-        menu = self.tk.Menu(self.root, tearoff=0)
-        var = self.tk.StringVar(value=self.policy)
-        for m in mode_list(self.cfg.policy, self.lang):
-            menu.add_radiobutton(label=f"{m['tag']} · {m['title']}", variable=var, value=m["key"],
-                                 command=lambda k=m["key"]: self.set_policy(k))
+        if self.policy_popup and self.policy_popup.winfo_exists():
+            self._close_policy_menu()
+            return
+
+        tk = self.tk
         b = self.policy_btn
-        menu.tk_popup(self.cv.winfo_rootx() + b.x, self.cv.winfo_rooty() + b.y + b.h)
+        self._policy_items = mode_list(self.cfg.policy, self.lang)
+        self._policy_row_h = 30
+        self._policy_width = max(b.w, 250)
+        self.policy_menu_target = len(self._policy_items) * self._policy_row_h + 12
+        self.policy_menu_height = 0
+
+        x = self.cv.winfo_rootx() + b.x
+        y = self.cv.winfo_rooty() + b.y + b.h + 5
+        self._policy_popup_xy = (x, y)
+        popup = self.policy_popup = tk.Toplevel(self.root)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.geometry(f"{self._policy_width}x1+{x}+{y}")
+
+        canvas = self._policy_canvas = tk.Canvas(
+            popup, bg=WIN_BG, highlightthickness=0, bd=0,
+            width=self._policy_width, height=self.policy_menu_target
+        )
+        canvas.pack(fill="both", expand=True)
+        self._draw_policy_popup()
+        popup.bind("<Escape>", lambda _e: self._close_policy_menu())
+        popup.bind("<FocusOut>", lambda _e: self.root.after(120, self._close_policy_menu))
+        popup.focus_force()
+        self._animate_policy_menu(1)
+
+    def _rounded_rect(self, canvas, x1, y1, x2, y2, radius=5, **kwargs):
+        """Vẽ hình chữ nhật bo góc bằng polygon smooth của Tk Canvas."""
+        r = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
+        points = [x1+r,y1, x2-r,y1, x2,y1, x2,y1+r,
+                  x2,y2-r, x2,y2, x2-r,y2, x1+r,y2,
+                  x1,y2, x1,y2-r, x1,y1+r, x1,y1]
+        return canvas.create_polygon(points, smooth=True, splinesteps=12, **kwargs)
+
+    def _draw_policy_popup(self):
+        c = self._policy_canvas
+        c.delete("all")
+        self._policy_row_backgrounds = {}
+        w, h = self._policy_width, self.policy_menu_target
+        self._rounded_rect(c, 1, 1, w-1, h-1, radius=5,
+                           fill="#ffffff", outline="#cfd4e5", width=1)
+        for i, m in enumerate(self._policy_items):
+            top = 6 + i * self._policy_row_h
+            bottom = top + self._policy_row_h - 2
+            selected = m["key"] == self.policy
+            row_tag = f"policy_row_{i}"
+            bg_id = c.create_rectangle(6, top, w-6, bottom, fill="#ffffff",
+                                       outline="", tags=(row_tag,))
+            self._policy_row_backgrounds[i] = bg_id
+            if selected:
+                self._rounded_rect(c, 5, top, w-5, bottom, radius=5,
+                                   fill="#f1efff", outline="#5b3df5", width=1,
+                                   tags=(row_tag,))
+            c.create_text(20, (top+bottom)//2, text="●" if selected else "○",
+                          fill="#5b3df5" if selected else "#7c86a3",
+                          font=(FONT_BOLD, 11), anchor="w", tags=(row_tag,))
+            c.create_text(43, (top+bottom)//2, text=f"{m['tag']}   {m['title']}",
+                          fill="#172033", font=(FONT, 10), anchor="w", tags=(row_tag,))
+            c.tag_bind(row_tag, "<Button-1>",
+                       lambda _e, key=m["key"]: self._choose_policy(key))
+            c.tag_bind(row_tag, "<Enter>", lambda _e, idx=i: self._policy_hover(idx, True))
+            c.tag_bind(row_tag, "<Leave>", lambda _e, idx=i: self._policy_hover(idx, False))
+
+    def _policy_hover(self, index, hovered):
+        if not self.policy_popup or not self.policy_popup.winfo_exists():
+            return
+        if self._policy_items[index]["key"] == self.policy:
+            return
+        bg_id = self._policy_row_backgrounds.get(index)
+        if bg_id:
+            self._policy_canvas.itemconfigure(bg_id,
+                                              fill="#f5f3ff" if hovered else "#ffffff")
+
+    def _animate_policy_menu(self, current):
+        if not self.policy_popup or not self.policy_popup.winfo_exists():
+            return
+        target = self.policy_menu_target
+        self.policy_menu_height = min(target, current)
+        self._layout()  # tăng chiều cao cửa sổ và đẩy các nút dưới xuống đồng bộ
+        x, y = self._policy_popup_xy
+        self.policy_popup.geometry(f"{self._policy_width}x{max(1, current)}+{x}+{y}")
+        if current < target:
+            nxt = min(target, current + max(8, target // 7))
+            self._policy_popup_job = self.root.after(12, lambda: self._animate_policy_menu(nxt))
+
+    def _choose_policy(self, key):
+        self._close_policy_menu()
+        self.set_policy(key)
+
+    def _close_policy_menu(self):
+        if not self.policy_popup:
+            return
+        if self._policy_popup_job:
+            try:
+                self.root.after_cancel(self._policy_popup_job)
+            except Exception:
+                pass
+            self._policy_popup_job = None
+        self._collapse_policy_menu(self.policy_menu_height)
+
+    def _collapse_policy_menu(self, current):
+        if not self.policy_popup or not self.policy_popup.winfo_exists():
+            self.policy_menu_height = 0
+            self._layout()
+            return
+        nxt = max(0, current - max(8, self.policy_menu_target // 7))
+        self.policy_menu_height = nxt
+        x, y = self._policy_popup_xy
+        if nxt > 0:
+            self.policy_popup.geometry(f"{self._policy_width}x{nxt}+{x}+{y}")
+            self._layout()
+            self._policy_popup_job = self.root.after(12, lambda: self._collapse_policy_menu(nxt))
+        else:
+            self.policy_popup.destroy()
+            self.policy_popup = None
+            self._policy_canvas = None
+            self.policy_menu_height = 0
+            self.policy_menu_target = 0
+            self._layout()
 
     def cycle_policy(self):
         keys = [m["key"] for m in mode_list(self.cfg.policy, self.lang)]
@@ -774,6 +901,7 @@ class ControlApp:
             self._set_info("stopped", "#4b5563")
 
     def close(self):
+        self._close_policy_menu()
         if self.session:
             self.session.request_stop()
             if self.thread:
