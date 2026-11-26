@@ -466,7 +466,9 @@ class Card(tk.Frame):
         self.bgc.delete("all")
         if w < 10 or h < 10:
             return
-        _round_rect(self.bgc, 0, 0, w, h, self.radius,
+        # Lùi vào 1px để nét vẽ (dày 1px) không bị cắt cụt ở mép
+        inset = px(1) 
+        _round_rect(self.bgc, inset, inset, w - inset, h - inset, self.radius,
                     fill=self.fill, outline=self.outline,
                     width=1 if self.outline else 0)
 
