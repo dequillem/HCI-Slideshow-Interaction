@@ -4,12 +4,15 @@ import base64
 import sys
 import threading
 import time
+import tkinter as tk 
 from pathlib import Path
 
 from ..config import Config
 from . import render
 from .gesture_guide import mode_list
 from .status_model import view_model
+from .theme import C, RADIUS, TYPE, px, SPACE
+from .widgets import _round_rect, _circle
 
 W, H = 100, 150          # kích thước cửa sổ trạng thái
 BG, FG, MUTED = "#111827", "#f9fafb", "#cbd5e1"
@@ -411,6 +414,72 @@ class _MenuRow:
         if fire:
             self.app._choose_policy(self.key)
 
+class StatusCard:
+    """Khung trạng thái vẽ trực tiếp lên Canvas của ControlApp."""
+    def __init__(self, app):
+        self.app = app
+        self.cv = app.cv
+        self.state = "idle"
+        self.desc = ""
+        self.progress = 0.0
+        self.x = self.y = self.w = self.h = 0
+
+    def place(self, x, y, w, h):
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self._draw()
+
+    def set(self, state: str, desc: str = "", progress: float = 0.0):
+        self.state = state
+        self.desc = desc
+        self.progress = progress
+        self._draw()
+
+    def _draw(self):
+        if self.w < 10 or self.h < 10:
+            return
+        self.cv.delete("infocard")
+        
+        # Nền xám, viền nhạt (giống kiểu thẻ thụt vào)
+        _round_rect(self.cv, self.x, self.y, self.x + self.w, self.y + self.h, RADIUS, fill=C["surface_alt"], outline=C["border"], width=1, tags="infocard")
+
+        # Icon tròn nhỏ bên trái (căn dọc theo dòng chữ đầu tiên)
+        colors = {
+            "idle": C["text_3"],
+            "starting": C["warning"],
+            "running": C["success"],
+            "error": C["danger"],
+            "stopped": C["neutral"]
+        }
+        dot_color = colors.get(self.state, C["text_3"])
+        cy = self.y + px(18)  # Căn giữa theo chiều dọc của dòng chữ trên
+        _circle(self.cv, self.x + px(16), cy, px(8), fill=dot_color, tags="infocard")
+
+        # Chữ trạng thái chính
+        if self.state == "idle":
+            state_text = "TẮT" if self.app.lang == "vi" else "OFF"
+        elif self.state == "starting":
+            state_text = "ĐANG KHỞI ĐỘNG" if self.app.lang == "vi" else "STARTING"
+        elif self.state == "running":
+            state_text = "ĐANG CHẠY" if self.app.lang == "vi" else "RUNNING"
+        elif self.state == "error":
+            state_text = "LỖI" if self.app.lang == "vi" else "ERROR"
+        elif self.state == "stopped":
+            state_text = "ĐÃ DỪNG" if self.app.lang == "vi" else "STOPPED"
+        else:
+            state_text = self.state.upper()
+
+        self.cv.create_text(self.x + px(28), cy, text=state_text, anchor="w", font=TYPE["small_b"], fill=C["text"], tags="infocard")
+
+        # Dòng mô tả phụ (nằm dưới)
+        if self.desc:
+            self.cv.create_text(self.x + px(12), self.y + px(38), text=self.desc, anchor="w", font=TYPE["small"], fill=C["text_2"], tags="infocard")
+
+        # Thanh tiến trình (nếu có) - sát đáy thẻ
+        if self.progress > 0:
+            bar_y = self.y + self.h - px(6)
+            self.cv.create_rectangle(self.x + px(12), bar_y, self.x + self.w - px(12), bar_y + px(4), fill=C["border"], outline="", tags="infocard")
+            self.cv.create_rectangle(self.x + px(12), bar_y, self.x + px(12) + (self.w - px(24)) * self.progress, bar_y + px(4), fill=C["accent"], outline="", tags="infocard")
+
 class ControlApp:
     def __init__(self, cfg: Config, log: bool = True, session_factory=None, maximized: bool = False):
         import tkinter as tk
@@ -423,7 +492,7 @@ class ControlApp:
         self.policy = cfg.policy                    # bộ lọc lệnh (Intent Gate policy) đang chọn; đổi được khi chưa chạy
         self.maximized = False
         self.lang = "vi"                            # "vi" | "en"
-        self.info_state = ("idle", "#4b5563", {})
+        self.info_state = ("idle", {})
         self.scale = 1.0
         self._images, self._layout_key, self._cfg_job, self._sync_job = {}, None, None, None
         self.bg_image = self.title_image = None
@@ -454,7 +523,7 @@ class ControlApp:
         self.cam_btn = CanvasButton(self, command=self.toggle_camera, skin="camera", align="center", key="C")
         self.lang_btn = CanvasButton(self, command=self.toggle_lang, skin="lang", align="center")
         self.small_buttons = [self.cam_btn, self.lang_btn]
-        self.info = CanvasText(self, "", fg=TXT_MUTED, font="small")
+        self.info_card = StatusCard(self)
         self._repaint()
         r.bind("<Key>", self._on_key)                 # phím tắt
         r.bind("<Configure>", self._schedule_sync, add="+")   # phóng to/thu nhỏ bằng thanh tiêu đề
@@ -568,8 +637,8 @@ class ControlApp:
             r.columnconfigure(1, weight=0)
         self._draw_background((cw, ch))
         y = y0 + self._draw_title(x0 + bw // 2, y0, bw)
-        self.info.place(x0, y, bw)          # dòng trạng thái nằm trên bộ nút
-        y += round(24 * s)                  # chừa chỗ cho dòng đó
+        self.info_card.place(x0, y, bw, bh)
+        y += bh + gap
         for b in self.buttons:
             b.place(x0, y, bw, bh)
             y += bh + gap
@@ -578,8 +647,13 @@ class ControlApp:
         sw = (bw - gap) // 2                                        # 2 nút nhỏ chung một hàng, khít 2 mép của các nút trên
         self.cam_btn.place(x0, y, sw, sh)
         self.lang_btn.place(x0 + bw - sw, y, sw, sh)
+        cam_bottom = y + sh  # Tọa độ đáy của hàng nút Camera/Ngôn ngữ
         y += sh + gap
-        # y += row_h + round(6 * s)
+        if guide_on and self.guide:
+            # Nếu đáy nút chưa vượt qua đáy mặc định của Guide (ch - 14) thì pady = 14
+            # Nếu đáy nút vượt sâu hơn, pady dưới sẽ thu hẹp lại để đáy Guide bám sát đáy nút
+            pady_bottom = max(0, min(14, ch - cam_bottom))
+            self.guide.frame.grid_configure(pady=(14, pady_bottom))     
         self._draw_policy_menu()
         self._layout_key = (cw, ch, self.maximized, guide_on)
         self._fit_window()
@@ -597,9 +671,9 @@ class ControlApp:
         if self.title_image:
             self.title_items.append(self.cv.create_image(cx, y, image=self.title_image, anchor="n"))
             y += self.title_image.height() + round(s)          # chữ nằm ngay dưới ảnh
-        self.title_items.append(self.cv.create_text(cx, y + round(s), text=self.tr("title"),
+        self.title_items.append(self.cv.create_text(cx, y, text=self.tr("title"),
                                                     anchor="n", fill=TXT, font=self.fonts["title"], width=width + 40, justify="center"))
-        return (y - y_start) + round(50 * s)                                            
+        return (y - y_start) + round(30 * s)                                            
 
     def _schedule_layout(self, _e):
         if self._cfg_job:
@@ -622,7 +696,7 @@ class ControlApp:
     def _center(self):
         r = self.root
         w, h = NORMAL_SIZE
-        r.geometry(f"{w}x{h}+{max(0, (r.winfo_screenwidth() - w) // 2)}+{max(0, (r.winfo_screenheight() - h) // 3)}")
+        r.geometry(f"{w}x{h}+10+10")
 
     # --- hai trạng thái cửa sổ ---
     def _zoom(self, on: bool):
@@ -718,10 +792,21 @@ class ControlApp:
         text = STR[self.lang][key]
         return text.format(**kw) if kw else text
 
-    def _set_info(self, key, fg, **kw):
-        self.info_state = (key, fg, kw)
-        self.info.config(text=self.tr(key, **kw), fg=fg)
+    def _set_info(self, key, **kw):
+        self.info_state = (key, kw)
+        desc = ""
+        prog = 0.0
+        if key == "starting":
+            desc = self.tr("starting")
+        elif key == "running":
+            desc = self.tr("running", fps=kw.get("fps", 0), seen=kw.get("seen", ""))
+            prog = 1.0
+        elif key == "error":
+            desc = self.tr("error", err=kw.get("err", ""))
+        elif key == "stopped":
+            desc = self.tr("stopped")
 
+        self.info_card.set(key, desc, prog)
     def toggle_lang(self):
         self._close_policy_menu(instant=True)
         self.lang = "en" if self.lang == "vi" else "vi"
@@ -740,8 +825,8 @@ class ControlApp:
         self.guide_btn.config(text=self.tr("guide_on" if self.guide and self.guide.visible else "guide_off"))
         self.cam_btn.config(text=self.tr("cam_on" if self.preview_var.get() else "cam_off"))
         self.lang_btn.config(text=self.tr("lang"))
-        key, fg, kw = self.info_state
-        self.info.config(text=self.tr(key, **kw), fg=fg)
+        key, kw = self.info_state
+        self._set_info(key, **kw)
         if self.guide:
             self.guide.set_lang(self.lang)                     
 
@@ -771,7 +856,7 @@ class ControlApp:
         self.status = StatusWindow(self.tk, self.root, self.stop, self.toggle_mode)
         self.start_btn.config(text=self.tr("stop"), bg="#dc2626", activebackground="#b91c1c", skin="stop")
         self._paint_policy()
-        self._set_info("starting", "#4b5563")
+        self._set_info("starting")
 
     def stop(self):
         if self.session:
@@ -807,7 +892,7 @@ class ControlApp:
             self.guide.hide()
             self.guide_btn.config(text=self.tr("guide_off"))
         else:
-            self.guide.show(grid=dict(row=0, column=1, sticky="nsew", padx=(0, MARGIN), pady=14))  # cột phải của cùng cửa sổ
+            self.guide.show(grid=dict(row=0, column=1, sticky="new", padx=(0, MARGIN), pady=14))  # cột phải của cùng cửa sổ
             self.guide_btn.config(text=self.tr("guide_on"))
         self._layout()
 
@@ -957,7 +1042,7 @@ class ControlApp:
                 if self.status:
                     self.status.draw(view_model(snap, time.monotonic()))
                 if snap["running"]:
-                    self._set_info("running", "#15803d", fps=snap["fps"], seen=self.tr("hand" if snap["hand"] > 0.3 else "nohand"))
+                    self._set_info("running", fps=snap["fps"], seen=self.tr("hand" if snap["hand"] > 0.3 else "nohand"))
         self.root.after(60, self._tick)
 
     def _finished(self):
@@ -969,9 +1054,9 @@ class ControlApp:
         self.start_btn.config(text=self.tr("start"), bg="#16a34a", activebackground="#15803d", state="normal", skin="start")
         self._paint_policy()
         if err:
-            self._set_info("error", "#dc2626", err=err)
+            self._set_info("error", err=err)
         else:
-            self._set_info("stopped", "#4b5563")
+            self._set_info("stopped")
 
     def close(self):
         self._close_policy_menu(instant=True)

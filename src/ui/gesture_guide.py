@@ -133,12 +133,12 @@ UI = {
            "modes_name": "Chế độ lọc lệnh (C1–C4)",
            "shortcuts_name": "Phím tắt", "selected": "Đang chọn",
            "prev": "Trước", "next": "Sau", "cmd": "Lệnh: ",
-           "modes_intro": "Quyết định khi nào một cử chỉ được coi là lệnh. Đổi ở thanh bên khi chưa chạy."},
+           "modes_intro": "Quyết định khi nào một cử chỉ được coi là lệnh."},
     "en": {"step": "Gesture {i} / {n}", "usage_name": "How to use",
            "modes_name": "Command filter modes (C1–C4)",
            "shortcuts_name": "Shortcuts", "selected": "Selected",
            "prev": "Prev", "next": "Next", "cmd": "Command: ",
-           "modes_intro": "Decides when a gesture counts as a command. Change it in the side bar before starting."},
+           "modes_intro": "Decides when a gesture counts as a command."},
 }
 
 
@@ -307,37 +307,45 @@ class GuidePanel:
         tk, p = self.tk, self.pages["modes"]
         for w in p.winfo_children():
             w.destroy()
+            
         self._label(p, UI[self.lang]["modes_name"], "title").pack(anchor="w")
+        # Giảm pady dưới của dòng giới thiệu
         self._label(p, UI[self.lang]["modes_intro"], fg=C["text_3"],
-                    style="small").pack(anchor="w", pady=(SPACE["xs"], SPACE["md"]))
+                    style="small").pack(anchor="w", pady=(SPACE["xs"], SPACE["sm"]))
         
         for m in mode_list(self.policy, self.lang):
             on = m["key"] == self.policy
             bg = C["accent_soft"] if on else C["surface"]
             
-            # SỬA LỖI CẮT VIỀN: Thêm padx/pady cho thẻ Card để lấy không gian vẽ viền & bóng
             wrapper = tk.Frame(p, bg=C["surface"])
-            wrapper.pack(fill="x", pady=(0, SPACE["sm"]))
+            # Giảm khoảng cách giữa các thẻ từ SPACE["sm"] (8px) xuống px(4)
+            wrapper.pack(fill="x", pady=(0, px(4)))
             
+            # Giảm pad bên trong thẻ từ SPACE["md"] (12px) xuống SPACE["sm"] (8px)
+            # Giảm radius cho bớt bo tròn to
             card = Card(wrapper, fill=bg, shadow=None,
                         outline=C["accent"] if on else C["border"],
-                        pad=SPACE["md"], radius=RADIUS)
-            # Đẩy thẻ vào trong 1 chút để viền không bị xén
-            card.pack(fill="x", padx=px(2)) 
+                        pad=SPACE["sm"], radius=px(8))
+            card.pack(fill="x", padx=px(1)) 
             
             row = card.inner
+            # Thu gọn khoảng cách từ Badge sang phần chữ
             self._badge(row, m["tag"], BADGE.get(m["tag"], C["neutral"])).pack(
-                side="left", anchor="n", padx=(0, SPACE["md"]))
+                side="left", anchor="n", padx=(0, SPACE["sm"]))
+                
             text = tk.Frame(row, bg=bg)
             text.pack(side="left", fill="x", expand=True)
+            
             head = tk.Frame(text, bg=bg)
             head.pack(fill="x")
             self._label(head, m["title"], "body_b").pack(side="left")
             if on:
                 self._label(head, UI[self.lang]["selected"], "small_b",
                             fg=C["accent_text"]).pack(side="right")
+            
+            # Thêm chút khoảng cách nhỏ (px(2)) giữa title và desc để không bị dính chữ
             self._label(text, m["desc"], "small", fg=C["text_2"],
-                        justify="left", anchor="w", wrap=True).pack(fill="x")
+                        justify="left", anchor="w", wrap=True).pack(fill="x", pady=(px(2), 0))
 
     # ---------- điều hướng ----------
     def _arrow(self, event) -> None:
