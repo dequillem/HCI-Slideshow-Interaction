@@ -30,7 +30,7 @@ swipe_hold_ms: 0         # policy swipe: 0 = nhận ngay khi GRU báo vuốt (đ
 presence_arm_ms: -1   # policy swipe: tay phải hiện liên tục ngần này ms mới ARMED; mất tay thì về IDLE
 disabled_commands: [play_pause]  # mở bàn tay = Space = sang slide trong PowerPoint -> dễ nhảy slide khi nói; tắt
 cooldown_ms: 500         # nghỉ sau mỗi lệnh. Một cú vuốt bị tính 2 lần -> tăng lên 1000-1500
-reverse_block_ms: 1500   # sau một cú vuốt, bỏ qua chiều ngược trong ngần này (nhịp đưa tay về bị đọc thành lệnh ngược); 0 = tắt
+reverse_block_ms: 1800   # sau một cú vuốt, bỏ qua chiều ngược trong ngần này (nhịp đưa tay về bị đọc thành lệnh ngược); 0 = tắt
 margin: 0.25             # abstain/combined: chênh lệch top-1/top-2 tối thiểu
 uncertain_floor: 0.35    # dưới mức này coi như không phải lệnh (không vào trạng thái chưa chắc)
 
@@ -44,7 +44,7 @@ stability_window_ms: 2000
 
 # C3 abstain / C4 combined: còn nghi ngờ thì quan sát thêm, hết hạn vẫn không rõ thì từ chối
 abstain_wait_ms: 600     # thời gian quan sát thêm tối đa
-clear_conf: 0.90         # qua ngưỡng nhưng dưới mức này = "chưa rõ", phải quan sát thêm
+clear_conf: 0.65        # qua ngưỡng nhưng dưới mức này = "chưa rõ", phải quan sát thêm
 conflict_floor: 0.50     # chiều vuốt ngược có p >= mức này trong conflict_window_ms = mâu thuẫn hướng
 conflict_window_ms: 700
 
