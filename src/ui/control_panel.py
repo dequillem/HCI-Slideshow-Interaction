@@ -1,312 +1,23 @@
+"""Cửa sổ điều khiển: thẻ bên trái (trạng thái, Bắt đầu/Dừng, Tập/Gửi phím thật, bộ lọc lệnh, camera, hướng dẫn)
++ thẻ hướng dẫn bên phải (ẩn/hiện bằng phím I) + ô trạng thái nhỏ nổi ở góc phải màn hình khi đang chạy.
+Màu, chữ, khoảng cách lấy từ theme.py; hình vẽ mượt từ render.py; nút và ô chọn từ widgets.py."""
 from __future__ import annotations
 
-import base64
 import sys
 import threading
 import time
-import tkinter as tk 
-from pathlib import Path
 
 from ..config import Config
 from . import render
 from .gesture_guide import mode_list
 from .status_model import view_model
-from .theme import C, RADIUS, TYPE, px, SPACE
-from .widgets import _round_rect, _circle
+from .theme import APP_NAME, APP_TAGLINE, C, FONT, RADIUS, SHADOW, SPACE, TYPE, load_bundled_fonts, px, tint
+from .widgets import Button, Card, RadioList, Segmented, Toggle, keycap_width, measure, section_label
 
-W, H = 100, 150          # kích thước cửa sổ trạng thái
-BG, FG, MUTED = "#111827", "#f9fafb", "#cbd5e1"
-
-# ===== Cửa sổ điều khiển: hai trạng thái (thường / phóng to), nền vẽ trên một Canvas =====
-FONT = "Lato Regular"                
-FONT_BOLD = "Lato Bold"      
-FONT_ITALIC = "Lato Italic"
-WIN_BG = "#eef2f7"                        # màu nền khi KHÔNG có ảnh nền
-TXT, TXT_MUTED, TXT_LINK = "#111827", "#4b5563", "#2563eb"    # màu chữ vẽ thẳng lên nền: đổi nếu ảnh nền tối
-NORMAL_SIZE = (440, 540)                  # cửa sổ thường, chưa bật hướng dẫn  -> ảnh nền bg_normal.png
-GUIDE_SIZE = (880, 640)                   # cửa sổ thường, đang bật hướng dẫn  -> ảnh nền bg_guide.png
-BTN_W, BTN_H = 340, 54                    # cỡ nút ở trạng thái thường; phóng to nhân với MAX_SCALE (476 x 76)
-MARGIN = 50                                # cách viền trên/trái của tiêu đề + nút ở cỡ thường và khi bật hướng dẫn
-HOVER_SHIFT = 5                           # nút nhích lên trái bấy nhiêu px khi hover (nhân theo tỉ lệ phóng to)
-EXTRUSION_DEPTH = 5
-EXTRUSION_COLOR = "#000000"
-BTN_PAD = 20                              # chữ trên nút cách mép trái bấy nhiêu px (nhân theo tỉ lệ phóng to)
-SMALL_H = 36 
-MAX_SCALE = 1.2
-ASSETS = Path(__file__).parent / "assets"
-BG_DIR = ASSETS / "backgrounds"            # bg_normal.png | bg_guide.png | bg_max.png | background.png (dùng chung)
-BTN_DIR = ASSETS / "buttons"              # <tên>.png, <tên>_hover.png, <tên>_down.png, <tên>_off.png
-TITLE_IMG = ASSETS / "label.png"          # ảnh tiêu đề (không có thì dùng chữ)
-FONT_DIR = ASSETS / "fonts"
-KEY_SIZE = 30                              # ô phím trên nút (px ở cỡ thường; nút nhỏ tự co theo chiều cao)
-GUIDE_ANIM_FRAMES, GUIDE_ANIM_MS = 10, 16     # hiệu ứng trượt khi bật/tắt hướng dẫn lúc phóng to: số khung và ms mỗi khung
-POLICY_ROW_H, POLICY_PAD = 30, 6           # chiều cao một dòng của danh sách bộ lọc và lề trên/dưới
-
-STR = {
-    "vi": {"start": "Bắt đầu", "stop": "Dừng", "stopping": "Đang dừng...",
-           "tap": "Chế độ: TẬP (không gửi phím)",
-           "real": "Chế độ: GỬI PHÍM THẬT",
-           "policy": "Bộ lọc lệnh: {tag}\n{second}", "policy_locked": "Dừng để đổi bộ lọc",
-           "guide_off": "Hướng dẫn ▶", "guide_on": "Hướng dẫn ◀",
-           "cam_on": "Camera: BẬT", "cam_off": "Camera: TẮT", "lang": "Tiếng Việt",
-           "idle": "Chưa chạy", "starting": "Đang khởi động camera...", "stopped": "Đã dừng", "error": "Lỗi: {err}",
-           "running": "Đang chạy · {fps:.0f} khung/s · {seen}", "hand": "thấy tay", "nohand": "chưa thấy tay",
-           "title": "Hệ thống điều khiển slide bằng cử chỉ tay",
-           "err_keys_t": "Không gửi được phím", "err_keys": "Thiếu thư viện pynput ({e}).\nCài bằng: pip install pynput",
-           "ask_real_t": "Chuyển sang GỬI PHÍM THẬT", "ask_real": "Từ giờ cử chỉ sẽ gửi phím thật vào cửa sổ đang được chọn. Tiếp tục?",
-           "err_mode_t": "Không đổi được chế độ"},
-    "en": {"start": "Start", "stop": "Stop", "stopping": "Stopping...",
-           "tap": "Mode: PRACTICE (no keys)", "real": "Mode: LIVE (sends keys)",
-           "policy": "Command filter: {tag}\n{second}", "policy_locked": "Stop to change filter",
-           "guide_off": "Guide ▶", "guide_on": "Guide ◀",
-           "cam_on": "Camera: ON", "cam_off": "Camera: OFF", "lang": "English",
-           "idle": "Not running", "starting": "Starting camera...", "stopped": "Stopped", "error": "Error: {err}",
-           "running": "Running · {fps:.0f} fps · {seen}", "hand": "hand detected", "nohand": "no hand",
-           "title": "Hand-Gesture Interaction Slideshow System",
-           "err_keys_t": "Cannot send keys", "err_keys": "Missing library pynput ({e}).\nInstall with: pip install pynput",
-           "ask_real_t": "Switch to LIVE mode", "ask_real": "Gestures will now send real keys to the selected window. Continue?",
-           "err_mode_t": "Cannot change mode"},
-}
-
-def load_bundled_fonts():
-    """Windows: đăng ký các .ttf/.otf trong assets/fonts cho riêng tiến trình này (không cài vào máy). Hệ khác: bỏ qua, Tk dùng font hệ thống."""
-    if sys.platform != "win32" or not FONT_DIR.exists():
-        return
-    import ctypes
-    for f in list(FONT_DIR.glob("*.ttf")) + list(FONT_DIR.glob("*.otf")):
-        try:
-            ctypes.windll.gdi32.AddFontResourceExW(str(f), 0x10, 0)      # 0x10 = FR_PRIVATE
-        except Exception:
-            pass
-
-def make_photo(tk, path, size, mode="stretch"):
-    """Đọc PNG/JPG thành PhotoImage đúng `size` (rộng, cao). mode "cover": phủ kín rồi cắt giữa (nền); "stretch": kéo cho vừa (nút).
-    Dùng OpenCV (đã có trong requirements) để đổi cỡ; không có thì dùng ảnh nguyên bản. Lỗi đọc ảnh -> None (giao diện quay về màu đặc)."""
-    try:
-        import numpy as np
-        try:
-            import cv2
-        except ImportError:
-            return tk.PhotoImage(file=str(path))
-        img = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_UNCHANGED)   # đọc được cả đường dẫn có dấu
-        if img is None:
-            return None
-        h, w = img.shape[:2]
-        tw, th = size
-        if mode == "cover":
-            k = max(tw / w, th / h)
-            nw, nh = max(tw, round(w * k)), max(th, round(h * k))
-            if (nw, nh) != (w, h):
-                img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-            x, y = (nw - tw) // 2, (nh - th) // 2
-            img = img[y:y + th, x:x + tw]
-        elif (w, h) != (tw, th):
-            img = cv2.resize(img, (tw, th), interpolation=cv2.INTER_AREA if tw * th < w * h else cv2.INTER_CUBIC)
-        ok, buf = cv2.imencode(".png", img)
-        return tk.PhotoImage(data=base64.b64encode(buf.tobytes())) if ok else None
-    except Exception:
-        return None
-
-def _shade(color, k=0.82):
-    """Làm tối màu #rrggbb (dùng cho nút khi bấm)."""
-    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-    return "#%02x%02x%02x" % (int(r * k), int(g * k), int(b * k))
-
-class CanvasButton:
-    """Nút vẽ trên Canvas: không có ô nền riêng nên ảnh nền nhìn xuyên qua được. Có ảnh trong assets/buttons/ thì dùng ảnh,
-    không thì vẽ hình chữ nhật màu. API giống tk.Button ở những chỗ ControlApp dùng: config(text, bg, fg, state, skin), ["state"].
-    Các phần tử (khung, ảnh, chữ) tạo một lần rồi chỉ cập nhật: xóa/tạo lại dưới con trỏ sẽ làm Tk bắn Enter/Leave liên tục."""
-
-
-    def __init__(self, app, command=None, **opts):
-        self.app, self.command = app, command
-        self.opts = {"text": "", "bg": "#e5e7eb", "activebackground": "#d1d5db", "fg": TXT, "state": "normal", "skin": None, "align": "left", "key": None}
-        self.opts.update(opts)
-        self.x = self.y = 0
-        self.w, self.h = BTN_W, BTN_H
-        self.hover = self.down = False
-        self.tag = f"cbtn{id(self)}"
-        cv = app.cv
-        self.s_item = cv.create_polygon(0, 0, 0, 0, 0, 0, fill="black", width=0, state="hidden", tags=self.tag)   # vệt đen đùn liền (kiểu logo NY Post)
-        self.r_item = cv.create_rectangle(0, 0, 1, 1, width=0, tags=self.tag)
-        self.i_item = cv.create_image(0, 0, anchor="nw", state="hidden", tags=self.tag)
-        self.t_item = cv.create_text(0, 0, justify="center", tags=self.tag)
-        self.k_item = cv.create_image(0, 0, anchor="nw", state="hidden", tags=self.tag)      # ô phím (khung)
-        self.kt_item = cv.create_text(0, 0, state="hidden", tags=self.tag)                   # chữ phím
-        app.btns.append(self)                  # hover/bấm do ControlApp xử lý theo tọa độ chuột (không gắn sự kiện lên từng phần tử)
-        self.draw()
-
-    # --- giống tk.Button ---
-    def config(self, **kw):
-        self.opts.update({k: v for k, v in kw.items() if k in self.opts})
-        self.draw()
-
-    configure = config
-
-    def cget(self, key):
-        return self.opts[key]
-
-    __getitem__ = cget
-
-    def invoke(self):
-        if self.opts["state"] != "disabled" and self.command:
-            self.command()
-
-    # --- vị trí và vẽ ---
-    def place(self, x, y, w, h):
-        self.x, self.y, self.w, self.h = x, y, w, h
-        self.draw()
-
-    def contains(self, px, py):
-        """Con trỏ có đang ở trên nút không: gồm cả vị trí gốc (bóng đen) và vị trí nhích lên khi hover (để con trỏ ở mép không làm nút nhảy qua lại)."""
-        off = round(HOVER_SHIFT * self.app.scale) if self.hover else 0
-        return self.x - off <= px <= self.x + self.w and self.y - off <= py <= self.y + self.h
-
-    def _state(self):
-        if self.opts["state"] == "disabled":
-            return "off"
-        return "down" if self.down and self.hover else "hover" if self.hover else ""
-
-    def draw(self):
-        cv, o, st = self.app.cv, self.opts, self._state()
-        off = round(HOVER_SHIFT * self.app.scale) if st in ("hover", "down") else 0
-        bx, by = self.x - off, self.y - off                      # vị trí vẽ của nút (nhích lên trái khi hover)
-        d, x, y, w, h = off, self.x, self.y, self.w, self.h
-        cv.coords(self.s_item, x - d, y - d,  x - d + w, y - d,  x + w, y,
-                               x + w, y + h,  x, y + h,  x - d, y - d + h)       # lục giác: nút nhích lên + vị trí gốc, nối chéo 2 góc
-        cv.itemconfig(self.s_item, state="normal" if off else "hidden")   # bóng đen đứng yên ở vị trí gốc, lộ ra khi nút nhích lên
-        s, key = self.app.scale, o["key"]
-        pad = round(BTN_PAD * s)
-        cs = min(round(KEY_SIZE * s), self.h - 2 * round(7 * s)) if key else 0      # cạnh ô phím (nút nhỏ thì ô nhỏ hơn)
-        padr = round(12 * s)
-        reserve = cs + padr + round(8 * s) if key else 0                             # chỗ dành cho ô phím bên phải
-        if o["align"] == "center":
-            cv.coords(self.t_item, bx + (self.w - reserve) // 2, by + self.h // 2)
-            anchor, just, wrap = "center", "center", (self.w - reserve - round(8 * s)) if key else 0
-        else:
-            cv.coords(self.t_item, bx + pad, by + self.h // 2)
-            anchor, just, wrap = "w", "left", (self.w - reserve - pad) if key else 0
-        cv.itemconfig(self.t_item, text=o["text"], anchor=anchor, justify=just, width=max(0, wrap),
-                      fill="#6b7280" if st == "off" else o["fg"],
-                      font=self.app.fonts["btn_s" if o["align"] == "center" else "btn"])
-        if key:
-            dark = st == "off" or o["fg"].lower() not in ("white", "#ffffff")        # nền nút sáng -> ô phím tối và ngược lại
-            kx, ky = bx + self.w - padr - cs, by + (self.h - cs) // 2
-            kimg = self.app.keycap_image(cs, dark)
-            cv.coords(self.k_item, kx, ky)
-            cv.itemconfig(self.k_item, image=kimg, state="normal" if kimg else "hidden")
-            cv.coords(self.kt_item, kx + cs / 2, ky + cs / 2)
-            cv.itemconfig(self.kt_item, text=key, state="normal", font=self.app.fonts["key"],
-                          fill="#6b7280" if st == "off" else "#374151" if dark else "#ffffff")
-        else:
-            cv.itemconfig(self.k_item, state="hidden")
-            cv.itemconfig(self.kt_item, state="hidden")
-        img = self.app.skin_image(o["skin"], st, (self.w, self.h))
-        if img is not None:
-            cv.coords(self.i_item, bx, by)
-            cv.itemconfig(self.i_item, image=img, state="normal")
-            cv.itemconfig(self.r_item, state="hidden")
-        else:
-            if st == "off":
-                fill = "#d1d5db"
-            elif st == "down":
-                fill = _shade(o["activebackground"])
-            elif st == "hover":
-                fill = o["activebackground"]
-            else:
-                fill = o["bg"]
-            cv.coords(self.r_item, bx, by, bx + self.w, by + self.h)
-            cv.itemconfig(self.r_item, fill=fill, state="normal")
-            cv.itemconfig(self.i_item, state="hidden")
-
-    def _enter(self, _e):
-        self.hover = True
-        self.app.cv.config(cursor="hand2" if self.opts["state"] != "disabled" else "")
-        self.draw()
-
-    def _leave(self, _e):
-        self.hover = self.down = False
-        self.app.cv.config(cursor="")
-        self.draw()
-
-    def _press(self, _e):
-        if self.opts["state"] != "disabled":
-            self.down = True
-            self.draw()
-
-    def _release(self, _e):
-        fire = self.down and self.hover
-        self.down = False
-        self.draw()
-        if fire:
-            self.invoke()
-
-
-class CanvasLink(CanvasButton):
-    """Dòng chữ bấm được (không khung): vẽ thẳng lên nền."""
-
-    def __init__(self, app, command=None, **opts):
-        super().__init__(app, command, **opts)
-        app.cv.itemconfig(self.r_item, state="hidden")
-        app.cv.itemconfig(self.i_item, state="hidden")
-
-    def draw(self):
-        cv, o = self.app.cv, self.opts
-        cv.itemconfig(self.r_item, state="hidden")
-        cv.itemconfig(self.i_item, state="hidden")
-        cv.coords(self.t_item, self.x, self.y + self.h // 2)
-        cv.itemconfig(self.t_item, text=o["text"], anchor="w", fill=o["fg"],
-                      font=FONT if self.hover else self.app.fonts["small"])
-
-
-class CanvasText:
-    """Dòng chữ không khung, vẽ thẳng lên nền."""
-
-    def __init__(self, app, text="", fg=TXT, font=FONT, anchor="nw"):
-        self.app, self.fontkey = app, font
-        self.id = app.cv.create_text(0, 0, text=text, fill=fg, anchor=anchor, font=app.fonts[font], justify="left")
-
-    def config(self, **kw):
-        if "text" in kw:
-            self.app.cv.itemconfig(self.id, text=kw["text"])
-        if "fg" in kw:
-            self.app.cv.itemconfig(self.id, fill=kw["fg"])
-
-    def place(self, x, y, width=0):
-        self.app.cv.coords(self.id, x, y)
-        self.app.cv.itemconfig(self.id, width=width, font=self.app.fonts[self.fontkey])
-
-
-class CanvasCheck:
-    """Ô tích + chữ, vẽ trên Canvas."""
-
-    def __init__(self, app, var, text, command):
-        self.app, self.var, self.text, self.command = app, var, text, command
-        self.x = self.y = 0
-        self.tag = f"ccheck{id(self)}"
-        app.cv.tag_bind(self.tag, "<ButtonRelease-1>", lambda _e: self.toggle())
-        app.cv.tag_bind(self.tag, "<Enter>", lambda _e: app.cv.config(cursor="hand2"))
-        app.cv.tag_bind(self.tag, "<Leave>", lambda _e: app.cv.config(cursor=""))
-
-    def toggle(self):
-        self.var.set(not self.var.get())
-        self.command()
-        self.draw()
-
-    def place(self, x, y):
-        self.x, self.y = x, y
-        self.draw()
-
-    def draw(self):
-        cv, s = self.app.cv, self.app.scale
-        cv.delete(self.tag)
-        b = round(16 * s)
-        cv.create_rectangle(self.x, self.y, self.x + b, self.y + b, fill="white", outline="#6b7280", tags=self.tag)
-        if self.var.get():
-            cv.create_line(self.x + b * .2, self.y + b * .55, self.x + b * .42, self.y + b * .78, self.x + b * .82, self.y + b * .22,
-                           fill=TXT_LINK, width=max(2, round(2 * s)), tags=self.tag)
-        cv.create_text(self.x + b + round(8 * s), self.y + b // 2, text=self.text, anchor="w", fill=TXT,
-                       font=self.app.fonts["small"], tags=self.tag)
+SIDEBAR_W = px(400)      # thẻ bên trái (gồm lề và bóng)
+GUIDE_W = px(640)        # thẻ hướng dẫn khi mở
+MIN_H = px(660)
+MODE_DOT = {True: C["warning"], False: C["danger"]}          # chấm màu của chế độ trên nền sáng
 
 
 def _no_activate(win) -> None:
@@ -324,21 +35,112 @@ def _no_activate(win) -> None:
         pass  # không có thì cửa sổ vẫn dùng được, chỉ là bấm vào sẽ lấy focus
 
 
+def _work_area(root):
+    """(trên, dưới) của vùng làm việc màn hình chính (trừ thanh tác vụ), theo pixel màn hình."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            rect = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):    # SPI_GETWORKAREA
+                return rect.top, rect.bottom
+        except Exception:
+            pass
+    return 0, root.winfo_screenheight() - px(48)
+
+
+def _fit_font(text, style, width, min_size=8):
+    """Font cỡ lớn nhất (<= cỡ của style) để `text` nằm gọn một dòng trong `width` px."""
+    family, size, *rest = style
+    while size > min_size and measure((family, size, *rest), text) > width:
+        size -= 1
+    return (family, size, *rest)
+
+
+def _progress(cv, x0, y, x1, value, color, track):
+    """Thanh tiến độ bo tròn hai đầu."""
+    h = px(6)
+    cv.create_image(x0, y, anchor="nw", image=render.shape(cv, x1 - x0, h, h // 2, fill=track))
+    if value > 0:
+        w = max(h, int((x1 - x0) * value))
+        cv.create_image(x0, y, anchor="nw", image=render.shape(cv, w, h, h // 2, grad=(color, tint(color, 0.25))))
+
+
+class StatusCard:
+    """Ô trạng thái trong thẻ bên: chế độ, nhãn trạng thái Intent Gate, lệnh, gợi ý, tiến độ giữ, dòng phụ (fps / lỗi)."""
+
+    H = px(104)
+
+    def __init__(self, tk, parent):
+        self.cv = tk.Canvas(parent, height=self.H, width=1, bg=parent["bg"], highlightthickness=0)
+        self.cv.bind("<Configure>", lambda _e: self._draw())
+        self.state = None
+
+    def show(self, vm, dry_run, meta="", error=False):
+        state = (tuple(vm.values()), dry_run, meta, error)
+        if state != self.state:
+            self.state = state
+            self.vm, self.dry_run, self.meta, self.error = vm, dry_run, meta, error
+            self._draw()
+
+    def _draw(self):
+        cv = self.cv
+        cv.delete("all")
+        w, h = cv.winfo_width(), self.H
+        if w < 40 or self.state is None:
+            return
+        vm, pad = self.vm, SPACE["lg"]
+        cv.create_image(0, 0, anchor="nw", image=render.shape(cv, w, h, RADIUS + px(2), fill=C["surface_alt"], outline=C["border"], width=1))
+        color = C["danger"] if self.error else vm["color"]
+        title = "LỖI" if self.error else vm["title"]
+        # hàng 1: nhãn trạng thái (nền nhạt cùng tông + chấm màu + chữ đậm) + lệnh | chế độ bên phải
+        ph, dot, y0 = px(30), px(9), px(14)
+        pw = measure(TYPE["heading"], title) + dot + px(32)
+        cv.create_image(pad, y0, anchor="nw", image=render.shape(cv, pw, ph, ph // 2, fill=tint(color, 0.86)))
+        cv.create_image(pad + px(13), y0 + ph / 2, anchor="w", image=render.circle(cv, dot, fill=color))
+        cv.create_text(pad + px(13) + dot + px(8), y0 + ph / 2, text=title, anchor="w", font=TYPE["heading"], fill=C["text"])
+        if vm["command"] and not self.error:
+            cv.create_text(pad + pw + SPACE["sm"], y0 + ph / 2, text=vm["command"], anchor="w", font=TYPE["body_b"], fill=C["text"])
+        mode = "Tập" if self.dry_run else "Gửi phím thật"
+        mx = w - pad - measure(TYPE["small_b"], mode) - px(13)
+        cv.create_image(mx, y0 + ph / 2, anchor="w", image=render.circle(cv, px(8), fill=MODE_DOT[self.dry_run]))
+        cv.create_text(w - pad, y0 + ph / 2, text=mode, anchor="e", font=TYPE["small_b"], fill=C["text"])
+        # hàng 2: gợi ý | dòng phụ (fps) bên phải; lỗi: chiếm cả hàng 2 và 3
+        if self.error:
+            cv.create_text(pad, px(54), text=vm["hint"] + "\n" + self.meta, anchor="nw", font=TYPE["small"],
+                           fill=C["danger_hover"], width=w - 2 * pad)
+            return
+        cv.create_text(pad, px(66), text=vm["hint"], anchor="w", font=TYPE["body"], fill=C["text_2"])
+        if self.meta:
+            cv.create_text(w - pad, px(66), text=self.meta, anchor="e", font=TYPE["small"], fill=C["text_3"])
+        _progress(cv, pad, px(84), w - pad, vm["progress"], color, C["border"])
+
+
 class StatusWindow:
-    """Cửa sổ nhỏ 100x150: dải chế độ (TẬP/THẬT) | ô trạng thái Intent Gate | lệnh | gợi ý | thanh tiến độ."""
+    """Ô trạng thái nổi ở góc phải màn hình khi đang chạy: chế độ | nhãn trạng thái | lệnh | gợi ý | thanh tiến độ.
+    Kéo để dời, chuột phải: đổi chế độ / dừng. Không giành focus của PowerPoint."""
+
+    W, H = px(176), px(146)
+    KEY = "#010203"      # màu trong suốt (Windows) để bo góc cửa sổ
 
     def __init__(self, tk, master, on_stop, on_toggle_mode):
         self.tk = tk
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)            # không viền, không thanh tiêu đề
         self.win.attributes("-topmost", True)
-        x = self.win.winfo_screenwidth() - W - 12
-        self.win.geometry(f"{W}x{H}+{x}+12")      # góc trên phải; kéo chuột để dời
-        self.canvas = tk.Canvas(self.win, width=W, height=H, bg=BG, highlightthickness=1, highlightbackground="#6b7280")
+        self.rounded = True
+        try:
+            self.win.attributes("-transparentcolor", self.KEY)
+        except tk.TclError:
+            self.rounded = False
+        x = self.win.winfo_screenwidth() - self.W - px(16)
+        self.win.geometry(f"{self.W}x{self.H}+{x}+{px(16)}")
+        self.canvas = tk.Canvas(self.win, width=self.W, height=self.H, bg=self.KEY if self.rounded else C["hud_bg"],
+                                highlightthickness=0, cursor="fleur")
         self.canvas.pack()
-        self.menu = tk.Menu(self.win, tearoff=0)
-        self.menu.add_command(label="Đổi chế độ TẬP / THẬT", command=on_toggle_mode)
-        self.menu.add_command(label="Dừng", command=on_stop)
+        self.menu = tk.Menu(self.win, tearoff=0, font=TYPE["body"])
+        self.menu.add_command(label="Đổi chế độ Tập / Gửi phím thật", command=on_toggle_mode)
+        self.menu.add_command(label="Dừng nhận cử chỉ", command=on_stop)
         self.canvas.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
         self.canvas.bind("<ButtonPress-1>", self._drag_start)
         self.canvas.bind("<B1-Motion>", self._drag)
@@ -365,123 +167,26 @@ class StatusWindow:
         if key == self._last:
             return
         self._last = key
-        c = self.canvas
+        c, W, H = self.canvas, self.W, self.H
         c.delete("all")
-        c.create_rectangle(0, 0, W, 18, fill=vm["mode_color"], width=0)                       # dải chế độ
-        c.create_text(W // 2, 9, text=vm["mode_text"], fill="white", font=(FONT_BOLD, 10))
-        c.create_rectangle(0, 18, W, 74, fill=vm["color"], width=0)                           # ô trạng thái
-        c.create_text(W // 2, 46, text=vm["title"], fill="white", font=(FONT_BOLD, 12), width=W - 6, justify="center")
-        c.create_text(W // 2, 88, text=vm["command"], fill=FG, font=(FONT_BOLD, 10), width=W - 8, justify="center")
-        c.create_text(W // 2, 116, text=vm["hint"], fill=MUTED, font=(FONT, 10), width=W - 10, justify="center")
-        c.create_rectangle(8, 141, W - 8, 146, fill="#374151", width=0)                       # thanh tiến độ
-        if vm["progress"] > 0:
-            c.create_rectangle(8, 141, 8 + (W - 16) * vm["progress"], 146, fill=vm["color"], width=0)
+        if self.rounded:
+            c.create_image(0, 0, anchor="nw", image=render.window_bg(c, W, H, px(16), C["hud_bg"], self.KEY))
+        pad = px(12)
+        c.create_image(pad + px(2), px(18), anchor="w", image=render.circle(c, px(8), fill=vm["mode_color"]))
+        c.create_text(pad + px(16), px(18), text=vm["mode_text"], anchor="w", fill=vm["mode_color"], font=TYPE["caps"])
+        y0, ph = px(32), px(44)
+        c.create_image(pad, y0, anchor="nw", image=render.shape(c, W - 2 * pad, ph, px(10), grad=(vm["color"], vm["color"])))
+        c.create_text(W / 2, y0 + ph / 2, text=vm["title"], fill=C["on_color"], font=_fit_font(vm["title"], TYPE["title"], W - 2 * pad - px(16)))
+        y = px(94)
+        if vm["command"]:
+            c.create_text(W / 2, y, text=vm["command"], fill=C["hud_text"], font=_fit_font(vm["command"], TYPE["body_b"], W - 2 * pad))
+            y += px(20)
+        c.create_text(W / 2, y, text=vm["hint"], fill=C["hud_muted"], font=TYPE["small"], width=W - 2 * pad, justify="center")
+        _progress(c, px(16), H - px(18), W - px(16), vm["progress"], vm["color"], C["hud_track"])
 
     def destroy(self):
         self.win.destroy()
 
-
-class _MenuRow:
-    """Một dòng của danh sách bộ lọc: nhận hover / bấm theo tọa độ chuột (cùng cách với CanvasButton)."""
-
-    def __init__(self, app, key, x, y, w, h, bg_id, selected):
-        self.app, self.key, self.x, self.y, self.w, self.h, self.bg_id, self.selected = app, key, x, y, w, h, bg_id, selected
-        self.hover = self.down = False
-        self.opts = {"state": "normal"}
-
-    def contains(self, px, py):
-        return self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h
-
-    def _paint(self):
-        try:
-            self.app.cv.itemconfig(self.bg_id, fill="#f5f3ff" if self.hover and not self.selected else "")
-        except Exception:
-            pass                                                        # dòng đã bị vẽ lại
-
-    def _enter(self, _e):
-        self.hover = True
-        self.app.cv.config(cursor="hand2")
-        self._paint()
-
-    def _leave(self, _e):
-        self.hover = self.down = False
-        self.app.cv.config(cursor="")
-        self._paint()
-
-    def _press(self, _e):
-        self.down = True
-
-    def _release(self, _e):
-        fire = self.down and self.hover
-        self.down = False
-        if fire:
-            self.app._choose_policy(self.key)
-
-class StatusCard:
-    """Khung trạng thái vẽ trực tiếp lên Canvas của ControlApp."""
-    def __init__(self, app):
-        self.app = app
-        self.cv = app.cv
-        self.state = "idle"
-        self.desc = ""
-        self.progress = 0.0
-        self.x = self.y = self.w = self.h = 0
-
-    def place(self, x, y, w, h):
-        self.x, self.y, self.w, self.h = x, y, w, h
-        self._draw()
-
-    def set(self, state: str, desc: str = "", progress: float = 0.0):
-        self.state = state
-        self.desc = desc
-        self.progress = progress
-        self._draw()
-
-    def _draw(self):
-        if self.w < 10 or self.h < 10:
-            return
-        self.cv.delete("infocard")
-        
-        # Nền xám, viền nhạt (giống kiểu thẻ thụt vào)
-        _round_rect(self.cv, self.x, self.y, self.x + self.w, self.y + self.h, RADIUS, fill=C["surface_alt"], outline=C["border"], width=1, tags="infocard")
-
-        # Icon tròn nhỏ bên trái (căn dọc theo dòng chữ đầu tiên)
-        colors = {
-            "idle": C["text_3"],
-            "starting": C["warning"],
-            "running": C["success"],
-            "error": C["danger"],
-            "stopped": C["neutral"]
-        }
-        dot_color = colors.get(self.state, C["text_3"])
-        cy = self.y + px(18)  # Căn giữa theo chiều dọc của dòng chữ trên
-        _circle(self.cv, self.x + px(16), cy, px(8), fill=dot_color, tags="infocard")
-
-        # Chữ trạng thái chính
-        if self.state == "idle":
-            state_text = "TẮT" if self.app.lang == "vi" else "OFF"
-        elif self.state == "starting":
-            state_text = "ĐANG KHỞI ĐỘNG" if self.app.lang == "vi" else "STARTING"
-        elif self.state == "running":
-            state_text = "ĐANG CHẠY" if self.app.lang == "vi" else "RUNNING"
-        elif self.state == "error":
-            state_text = "LỖI" if self.app.lang == "vi" else "ERROR"
-        elif self.state == "stopped":
-            state_text = "ĐÃ DỪNG" if self.app.lang == "vi" else "STOPPED"
-        else:
-            state_text = self.state.upper()
-
-        self.cv.create_text(self.x + px(28), cy, text=state_text, anchor="w", font=TYPE["small_b"], fill=C["text"], tags="infocard")
-
-        # Dòng mô tả phụ (nằm dưới)
-        if self.desc:
-            self.cv.create_text(self.x + px(12), self.y + px(38), text=self.desc, anchor="w", font=TYPE["small"], fill=C["text_2"], tags="infocard")
-
-        # Thanh tiến trình (nếu có) - sát đáy thẻ
-        if self.progress > 0:
-            bar_y = self.y + self.h - px(6)
-            self.cv.create_rectangle(self.x + px(12), bar_y, self.x + self.w - px(12), bar_y + px(4), fill=C["border"], outline="", tags="infocard")
-            self.cv.create_rectangle(self.x + px(12), bar_y, self.x + px(12) + (self.w - px(24)) * self.progress, bar_y + px(4), fill=C["accent"], outline="", tags="infocard")
 
 class ControlApp:
     def __init__(self, cfg: Config, log: bool = True, session_factory=None, maximized: bool = False):
@@ -493,230 +198,116 @@ class ControlApp:
         self.dry_run = cfg.dry_run                  # mặc định bắt đầu ở chế độ TẬP
         self.session = self.thread = self.status = self.guide = None
         self.policy = cfg.policy                    # bộ lọc lệnh (Intent Gate policy) đang chọn; đổi được khi chưa chạy
-        self.maximized = False
-        self.lang = "vi"                            # "vi" | "en"
-        self.info_state = ("idle", {})
-        self.scale = 1.0
-        self._images, self._layout_key, self._cfg_job, self._sync_job = {}, None, None, None
-        self.bg_image = self.title_image = None
-        self.policy_open = False                     # danh sách bộ lọc đang mở (hoặc đang trượt)
-        self._policy_closing, self._policy_popup_job = False, None
-        self.menu_rows, self._menu_rect, self._policy_items = [], None, []
-        self.policy_menu_height = 0  # chiều cao đang mở; dùng để đẩy các nút phía dưới xuống
-        self.policy_menu_target = 0
-        self._col = (MARGIN, MARGIN - 20, 1.0)       # (x0, y0, scale) của cột điều khiển ở lần vẽ gần nhất
-        self._anim = self._anim_job = self._anim_done = None
+        self.error = None
         load_bundled_fonts()
         r = self.root = tk.Tk()
-        r.title("HGISS")
-        r.configure(bg=WIN_BG)
-        r.resizable(True, True)           # giữ nút phóng to trên thanh tiêu đề; kéo giãn tay bị đưa về cỡ cố định (_sync_zoom)
-        r.rowconfigure(0, weight=1)
+        r.title(f"{APP_NAME} · {APP_TAGLINE}")
+        r.configure(bg=C["bg"])
+        r.option_add("*Font", TYPE["body"])
         r.protocol("WM_DELETE_WINDOW", self.close)
-        self._make_fonts()
-        self.cv = tk.Canvas(r, highlightthickness=0, bd=0, bg=WIN_BG)    # nền + mọi thứ ở cột điều khiển vẽ trên Canvas này
-        self.cv.place(x=0, y=0, relwidth=1, relheight=1)
-        self.title_items = []
-        self.btns, self.hover_btn = [], None       # mọi nút trên Canvas; nút đang được rê chuột
-        self.start_btn = CanvasButton(self, command=self.toggle_run, bg="#16a34a",
-                                      activebackground="#15803d", fg="white", skin="start", key="S")
-        self.mode_btn = CanvasButton(self, command=self.toggle_mode, key="M")
-        self.policy_btn = CanvasButton(self, command=self.open_policy_menu, bg="#dbeafe", activebackground="#bfdbfe", skin="policy", key="P")
-        self.guide_btn = CanvasButton(self, command=self.toggle_guide, skin="guide", key="G")
-        self.buttons = [self.start_btn, self.mode_btn, self.policy_btn, self.guide_btn]
-        self.preview_var = tk.BooleanVar(value=False)
-        self.cam_btn = CanvasButton(self, command=self.toggle_camera, skin="camera", align="center", key="C")
-        self.lang_btn = CanvasButton(self, command=self.toggle_lang, skin="lang", align="center")
-        self.small_buttons = [self.cam_btn, self.lang_btn]
-        self.info_card = StatusCard(self)
-        self._repaint()
-        r.bind("<Key>", self._on_key)                 # phím tắt
-        r.bind("<Configure>", self._schedule_sync, add="+")   # phóng to/thu nhỏ bằng thanh tiêu đề
-        self.cv.bind("<Configure>", self._schedule_layout)
-        self.cv.bind("<Motion>", self._on_motion)
-        self.cv.bind("<Leave>", lambda _e: self._set_hover(None))
-        self.cv.bind("<ButtonPress-1>", self._on_press)
-        self.cv.bind("<ButtonRelease-1>", self._on_release)
-        self._layout()
-        self._center()
+        try:
+            r.iconphoto(True, render.logo(r, px(64)))
+        except Exception:
+            pass
+        r.rowconfigure(0, weight=1)
+        r.columnconfigure(0, minsize=SIDEBAR_W)
+        r.columnconfigure(1, weight=1)
+        self._build_sidebar()
+        self.content = tk.Frame(r, bg=C["bg"])
+        self.content.grid(row=0, column=1, sticky="nsew")
+        r.bind("<Key>", self._on_key)
+        r.bind("<Configure>", self._on_configure, add="+")
+        self._refresh_sidebar()
+        self._fit(center=True)
         if maximized:
             self.set_maximized(True)
         r.after(60, self._tick)
 
-    # --- ảnh: nền và nút ---
-    def _make_fonts(self):
-        s = self.scale
-        self.fonts = {"btn": (FONT_BOLD, round(14 * s)), "btn_s": (FONT_BOLD, round(11 * s)), "key": (FONT_BOLD, round(10 * s)), "title": (FONT_BOLD, round(12 * s)),
-                      "sub": (FONT_ITALIC, round(12 * s)), "small": (FONT, round(10 * s)),
-                      "small_u": (FONT, round(10 * s), "underline")}
+    # ---------- thẻ bên ----------
+    def _build_sidebar(self):
+        tk = self.tk
+        gap = SPACE["lg"]
+        self.side_card = Card(self.root, pad=SPACE["xl"], fill_height=True)
+        self.side_card.grid(row=0, column=0, sticky="nsew", padx=(gap, 0), pady=gap)
+        inner = self.inner = self.side_card.inner
 
-    def _photo(self, path, size, mode):
-        key = (str(path), size, mode)
-        if key not in self._images:
-            self._images[key] = make_photo(self.tk, path, size, mode)      # None nếu lỗi: nhớ luôn để khỏi đọc lại mỗi lần vẽ
-        return self._images[key]
+        head = tk.Frame(inner, bg=C["surface"])
+        head.pack(fill="x")
+        self.logo = render.logo(head, px(44))
+        tk.Label(head, image=self.logo, bg=C["surface"]).pack(side="left")
+        names = tk.Frame(head, bg=C["surface"])
+        names.pack(side="left", padx=(SPACE["md"], 0))
+        tk.Label(names, text=APP_NAME, font=TYPE["display"], fg=C["text"], bg=C["surface"]).pack(anchor="w")
+        tk.Label(names, text=APP_TAGLINE, font=TYPE["small"], fg=C["text_2"], bg=C["surface"]).pack(anchor="w")
 
-    def skin_image(self, skin, state, size):
-        """Ảnh của nút: assets/buttons/<skin>[_hover|_down|_off].png; thiếu ảnh trạng thái thì dùng <skin>.png; không có thì None."""
-        if not skin:
-            return None
-        for name in ((f"{skin}_{state}" if state else None), skin):
-            if name and (BTN_DIR / f"{name}.png").exists():
-                return self._photo(BTN_DIR / f"{name}.png", size, "stretch")
-        return None
+        self.card = StatusCard(tk, inner)
+        self.card.cv.pack(fill="x", pady=(SPACE["lg"], SPACE["md"]))
+        self.start_btn = Button(inner, "Bắt đầu nhận cử chỉ", self.toggle_run, variant="primary", icon="play", shortcut="S", height=px(48))
+        self.start_btn.pack(fill="x")
 
-    def keycap_image(self, size, dark):
-        """Ô phím trên nút: assets/buttons/keycap_dark.png | keycap_light.png | keycap.png nếu có, không thì tự vẽ bo góc."""
-        key = ("keycap", size, dark)
-        if key not in self._images:
-            img = None
-            try:
-                for name in (f"keycap_{'dark' if dark else 'light'}", "keycap"):
-                    if (BTN_DIR / f"{name}.png").exists():
-                        img = self._photo(BTN_DIR / f"{name}.png", (size, size), "stretch")
-                        break
-                if img is None:
-                    fill, outline = ("#FFFFFFB8", "#1118272E") if dark else ("#FFFFFF40", None)
-                    img = render.shape(self.cv, size, size, max(3, round(size * 0.28)), fill=fill, outline=outline, width=1)
-            except Exception:
-                img = None
-            self._images[key] = img
-        return self._images[key]
+        section_label(inner, "CHẾ ĐỘ", "phím M").pack(fill="x", pady=(SPACE["lg"], SPACE["xs"]))
+        self.mode_seg = Segmented(inner, [("dry", "Tập", C["warning"]), ("real", "Gửi phím thật", C["danger"])],
+                                  "dry", self._pick_mode)
+        self.mode_seg.pack(fill="x")
+        self.mode_help = tk.Label(inner, font=TYPE["small"], fg=C["text_3"], bg=C["surface"], anchor="w", justify="left")
+        self.mode_help.pack(fill="x", pady=(SPACE["xs"], 0))
 
-    def _draw_background(self, size):
-        guide_on = bool(self.guide and self.guide.visible)
-        key = "max" if self.maximized else "guide" if guide_on else "normal"
-        self.cv.delete("bg")
-        for f in (BG_DIR / f"bg_{key}.png", BG_DIR / "background.png"):
-            if f.exists():
-                img = self._photo(f, size, "cover")
-                if img is not None:
-                    self.bg_image = img
-                    self.cv.create_image(0, 0, image=img, anchor="nw", tags="bg")
-                    self.cv.tag_lower("bg")
-                return
+        self.policy_head = section_label(inner, "BỘ LỌC LỆNH", "phím P")
+        self.policy_head.pack(fill="x", pady=(SPACE["md"], SPACE["xs"]))
+        self.policy_list = RadioList(inner, mode_list(self.cfg.policy), self.policy, self.set_policy)
+        self.policy_list.pack(fill="x")
 
-    # --- bố cục theo trạng thái cửa sổ ---
-    def _canvas_size(self):
-        if self.maximized:
-            return max(1, self.cv.winfo_width()), max(1, self.cv.winfo_height())
-        base = GUIDE_SIZE if (self.guide and self.guide.visible) else NORMAL_SIZE
-        return base[0], base[1] + self.policy_menu_height
+        tk.Frame(inner, height=1, bg=C["border"]).pack(fill="x", pady=(SPACE["sm"], SPACE["xs"]))   # trước là (md, sm)
+        row = tk.Frame(inner, bg=C["surface"])
+        row.pack(fill="x")
+        self.preview_var = tk.BooleanVar(value=False)
+        self.cam = Toggle(row, self.preview_var, "Camera", self._apply_preview, shortcut="C")
+        self.cam.pack(side="left", fill="x", expand=True, padx=(0, SPACE["lg"]))
+        self.guide_btn = Button(row, "Hướng dẫn", self.toggle_guide, variant="ghost", shortcut="I", height=px(38),
+                                width=measure(TYPE["body_b"], "Hướng dẫn") + keycap_width("I") + px(40))
+        self.guide_btn.pack(side="right")
 
-    def _layout(self):
-        """Thường: cột điều khiển ở giữa. Phóng to (chưa bật hướng dẫn): ở giữa và to hơn.
-        Bật hướng dẫn: cột điều khiển dồn sang trái cỡ thường, hướng dẫn chiếm phần còn lại."""
-        r, tk = self.root, self.tk
-        guide_on = bool(self.guide and self.guide.visible)
-        cw, ch = self._canvas_size()
-        self.scale = 1.0
-        if self.maximized and not guide_on:
-            # co lại vừa chiều cao cửa sổ, tính cả danh sách thả xuống khi mở hết cỡ (để cỡ không nhảy khi mở/đóng)
-            if self.title_image is None and TITLE_IMG.exists():
-                try:
-                    self.title_image = self.tk.PhotoImage(file=str(TITLE_IMG))
-                except self.tk.TclError:
-                    self.title_image = False
-            img_h = (self.title_image.height() + 6) if self.title_image else 0
-            full_menu = len(mode_list(self.cfg.policy, self.lang)) * POLICY_ROW_H + 2 * POLICY_PAD + 5
-            need = img_h + 70 + 4 * (BTN_H + 10) + (SMALL_H + 10) + 24 + full_menu
-            self.scale = max(1.0, min(MAX_SCALE, (ch - 20) / need))
-        if self._anim:
-            self.scale = self._anim["scale"]
-        self._make_fonts()
-        s = self.scale
-        bw, bh, gap = round(BTN_W * s), round(BTN_H * s), round(10 * s)
-        title_h, row_h = round(70 * s), round(30 * s)
-        sh = round(SMALL_H * s)
-        img_h = (self.title_image.height() + round(6 * s)) if self.title_image else 0
-        menu_h = (self.policy_menu_height + round(5 * s)) if self.policy_menu_height else 0
-        total = img_h + title_h + 4 * (bh + gap) + (sh + gap) + round(24 * s) + menu_h
-        if guide_on:
-            x0, y0 = MARGIN, MARGIN - 20
-            r.columnconfigure(0, weight=0, minsize=MARGIN + bw + MARGIN) 
-            r.columnconfigure(1, weight=1)
-        else:
-            if self.maximized:
-                x0, y0 = (cw - bw) // 2, max(10, (ch - total) // 2 - 20)   # menu mở ra thì cả cột dịch lên
-            else:
-                x0, y0 = MARGIN, MARGIN - 20         # cỡ thường: cách viền trái và trên 50 px, giống lúc bật hướng dẫn
-            r.columnconfigure(0, weight=1, minsize=0)
-            r.columnconfigure(1, weight=0)
-        if self._anim:
-            x0, y0 = self._anim["x0"], self._anim["y0"]
-        self._col = (x0, y0, self.scale)
-        self._draw_background((cw, ch))
-        y = y0 + self._draw_title(x0 + bw // 2, y0, bw)
-        self.info_card.place(x0, y, bw, bh)
-        y += bh + gap
-        for b in self.buttons:
-            b.place(x0, y, bw, bh)
-            y += bh + gap
-            if b is self.policy_btn and self.policy_menu_height:
-                y += self.policy_menu_height + round(5 * s)
-        sw = (bw - gap) // 2                                        # 2 nút nhỏ chung một hàng, khít 2 mép của các nút trên
-        self.cam_btn.place(x0, y, sw, sh)
-        self.lang_btn.place(x0 + bw - sw, y, sw, sh)
-        cam_bottom = y + sh  # Tọa độ đáy của hàng nút Camera/Ngôn ngữ
-        y += sh + gap
-        if guide_on and self.guide:
-            # Nếu đáy nút chưa vượt qua đáy mặc định của Guide (ch - 14) thì pady = 14
-            # Nếu đáy nút vượt sâu hơn, pady dưới sẽ thu hẹp lại để đáy Guide bám sát đáy nút
-            pady_bottom = max(0, min(14, ch - cam_bottom))
-            self.guide.frame.grid_configure(pady=(14, pady_bottom))     
-        self._draw_policy_menu()
-        self._layout_key = (cw, ch, self.maximized, guide_on)
-        self._fit_window()
-        
-    def _draw_title(self, cx, y, width):
-        for it in self.title_items:
-            self.cv.delete(it)
-        self.title_items = []
-        s, y_start = self.scale, y
-        if self.title_image is None and TITLE_IMG.exists():
-            try:
-                self.title_image = self.tk.PhotoImage(file=str(TITLE_IMG))
-            except self.tk.TclError:
-                self.title_image = False
-        if self.title_image:
-            self.title_items.append(self.cv.create_image(cx, y, image=self.title_image, anchor="n"))
-            y += self.title_image.height() + round(s)          # chữ nằm ngay dưới ảnh
-        self.title_items.append(self.cv.create_text(cx, y, text=self.tr("title"),
-                                                    anchor="n", fill=TXT, font=self.fonts["title"], width=width + 40, justify="center"))
-        return (y - y_start) + round(30 * s)                                            
+    def _refresh_sidebar(self):
+        running = self.session is not None
+        self.mode_seg.set("dry" if self.dry_run else "real")
+        self.mode_help.config(text="Chỉ hiện lệnh nhận được, không bấm phím." if self.dry_run
+                              else "Cử chỉ bấm phím thật vào cửa sổ đang được chọn.")
+        self.policy_list.set(self.policy)
+        self.policy_list.set_enabled(not running)
+        self.policy_head.winfo_children()[1].config(text="khóa khi đang chạy" if running else "phím P")
+        if not running:
+            vm = view_model({"running": False, "dry_run": self.dry_run}, time.monotonic())
+            meta = "Kiểm tra camera rồi bấm Bắt đầu lại." if self.error else ""
+            if self.error:
+                vm = {**vm, "hint": self.error}
+            self.card.show(vm, self.dry_run, meta, error=bool(self.error))
 
-    def _schedule_layout(self, _e):
-        if self._cfg_job:
-            self.root.after_cancel(self._cfg_job)
-        self._cfg_job = self.root.after(60, self._relayout)
+    # ---------- kích thước cửa sổ ----------
+    def _guide_on(self):
+        return bool(self.guide and self.guide.visible)
 
-    def _relayout(self):
-        """Kích thước Canvas đổi (vd vừa phóng to xong): vẽ lại nền và xếp lại cột điều khiển."""
-        self._cfg_job = None
-        guide_on = bool(self.guide and self.guide.visible)
-        if self._layout_key != (self.cv.winfo_width(), self.cv.winfo_height(), self.maximized, guide_on):
-            self._layout()
-
-    def _fit_window(self):
-        if self.maximized:
-            return
-        w, h = self._canvas_size()
-        self.root.geometry(f"{w}x{h}")
-
-    def _center(self):
+    def _fit(self, center=False):
+        """Đặt cỡ cửa sổ theo việc hướng dẫn đang mở hay không (khi không phóng to)."""
         r = self.root
-        w, h = NORMAL_SIZE
-        r.geometry(f"{w}x{h}+10+10")
+        if self.is_maximized():
+            return
+        r.update_idletasks()
+        w = SIDEBAR_W + SPACE["lg"] + (GUIDE_W if self._guide_on() else 0)
+        need = self.inner.winfo_reqheight() + 2 * (SPACE["xl"] + SPACE["lg"] + self.side_card.m)
+        top, bottom = _work_area(r)
+        h = min(max(MIN_H, need), bottom - top - px(48))     # chừa thanh tiêu đề cửa sổ
+        if center:
+            r.geometry(f"{w}x{h}+{max(0, (r.winfo_screenwidth() - w) // 2)}+{top + max(0, (bottom - top - h - px(40)) // 2)}")
+        else:
+            r.geometry(f"{w}x{h}")
+        r.minsize(SIDEBAR_W + SPACE["lg"], h)
 
-    # --- hai trạng thái cửa sổ ---
-    def _zoom(self, on: bool):
-        """Gọi hệ điều hành phóng to / khôi phục (vẫn thấy thanh tiêu đề và thanh tác vụ, khác với toàn màn hình F11)."""
-        try:
-            self.root.state("zoomed" if on else "normal")                  # Windows, macOS
-        except self.tk.TclError:
-            self.root.attributes("-zoomed", on)                            # Linux
+    def _on_configure(self, e):
+        """Người dùng kéo rộng / phóng to cửa sổ khi hướng dẫn đang ẩn: hiện hướng dẫn cho khỏi trống."""
+        if e.widget is self.root and e.width > SIDEBAR_W + px(320) and not self._guide_on():
+            self.root.after_idle(lambda: None if self._guide_on() else self.toggle_guide())
 
-    def _is_zoomed(self) -> bool:
+    def is_maximized(self) -> bool:
         try:
             if sys.platform in ("win32", "darwin"):
                 return self.root.state() == "zoomed"
@@ -725,129 +316,36 @@ class ControlApp:
             return False
 
     def set_maximized(self, on: bool):
-        on = bool(on)
-        if on == self.maximized:
-            return
-        if self._anim:
-            self._finish_guide_anim()
-        self._close_policy_menu(instant=True)
-        self.maximized = on
-        self._zoom(on)
-        self._layout()
+        try:
+            self.root.state("zoomed" if on else "normal")
+        except self.tk.TclError:
+            self.root.attributes("-zoomed", bool(on))
+        if on and not self._guide_on():
+            self.toggle_guide()
+        if not on:
+            self._fit()
 
-    maximize = set_maximized                    # tên cũ, run_ui(maximized=True) vẫn dùng
-
-    def is_maximized(self) -> bool:
-        return self.maximized
+    maximize = set_maximized
 
     def toggle_maximized(self):
-        self.set_maximized(not self.maximized)
+        self.set_maximized(not self.is_maximized())
 
-    def _schedule_sync(self, event):
-        if event.widget is not self.root:
-            return
-        if self._sync_job:
-            self.root.after_cancel(self._sync_job)
-        self._sync_job = self.root.after(80, self._sync_zoom)
-
-    def _sync_zoom(self):
-        """Người dùng khôi phục bằng nút trên thanh tiêu đề: đưa cờ và bố cục về khớp."""
-        self._sync_job = None
-        z = self._is_zoomed()
-        if z != self.maximized:
-            self.set_maximized(z)
-        elif not z:
-            w, h = self._canvas_size()                  # người dùng kéo cạnh cửa sổ: trả về cỡ cố định
-            if (self.root.winfo_width(), self.root.winfo_height()) != (w, h):
-                self.root.geometry(f"{w}x{h}")
-
+    # ---------- phím tắt ----------
     def _on_key(self, e):
-        """S = Bắt đầu/Dừng · M = TẬP/GỬI THẬT · P = bộ lọc lệnh · G = hướng dẫn · C = bật/tắt camera"""
+        """S = Bắt đầu/Dừng · M = Tập/Gửi phím thật · P = bộ lọc lệnh · I = hướng dẫn · C = camera."""
         k = (e.keysym or "").lower()
-        if k == "s" and self.start_btn["state"] != "disabled":
+        if k == "s" and self.start_btn.enabled:
             self.toggle_run()
         elif k == "m":
             self.toggle_mode()
         elif k == "p":
             self.cycle_policy()
-        elif k == "g":
+        elif k == "i":
             self.toggle_guide()
         elif k == "c":
-            self.toggle_camera()
+            self.cam.invoke()
 
-    # --- chuột trên các nút (một chỗ duy nhất, chỉ vẽ lại khi nút đang rê thay đổi) ---
-    def _on_motion(self, e):
-        hit = next((b for b in reversed(self.menu_rows + self.btns) if b.contains(e.x, e.y)), None)
-        self._set_hover(hit)
-
-    def _set_hover(self, btn):
-        if btn is self.hover_btn:
-            return
-        old, self.hover_btn = self.hover_btn, btn
-        if old:
-            old._leave(None)
-        if btn:
-            btn._enter(None)
-
-    def _on_press(self, e):
-        if self.policy_open and not self._in_menu(e.x, e.y) and not self.policy_btn.contains(e.x, e.y):
-            self._close_policy_menu()                                 # bấm ra ngoài danh sách: đóng
-        if self.hover_btn:
-            self.hover_btn._press(e)
-
-    def _on_release(self, e):
-        if self.hover_btn:
-            self.hover_btn._release(e)
-
-    # --- ngôn ngữ ---
-    def tr(self, key, **kw):
-        text = STR[self.lang][key]
-        return text.format(**kw) if kw else text
-
-    def _set_info(self, key, **kw):
-        self.info_state = (key, kw)
-        desc = ""
-        prog = 0.0
-        if key == "starting":
-            desc = self.tr("starting")
-        elif key == "running":
-            desc = self.tr("running", fps=kw.get("fps", 0), seen=kw.get("seen", ""))
-            prog = 1.0
-        elif key == "error":
-            desc = self.tr("error", err=kw.get("err", ""))
-        elif key == "stopped":
-            desc = self.tr("stopped")
-
-        self.info_card.set(key, desc, prog)
-    def toggle_lang(self):
-        self._close_policy_menu(instant=True)
-        self.lang = "en" if self.lang == "vi" else "vi"
-        self._repaint()
-        self._layout()                                          # tiêu đề vẽ lại bằng ngôn ngữ mới
-
-    def _repaint(self):
-        """Gán lại toàn bộ chữ trên giao diện theo ngôn ngữ và trạng thái hiện tại."""
-        running = self.session is not None
-        if self.start_btn["state"] != "disabled":            # đang "Đang dừng..." thì giữ nguyên
-            self.start_btn.config(text=self.tr("stop" if running else "start"))
-        else:
-            self.start_btn.config(text=self.tr("stopping"))
-        self._paint_mode()
-        self._paint_policy()
-        self.guide_btn.config(text=self.tr("guide_on" if self.guide and self.guide.visible else "guide_off"))
-        self.cam_btn.config(text=self.tr("cam_on" if self.preview_var.get() else "cam_off"))
-        self.lang_btn.config(text=self.tr("lang"))
-        key, kw = self.info_state
-        self._set_info(key, **kw)
-        if self.guide:
-            self.guide.set_lang(self.lang)                     
-
-    def toggle_camera(self):
-        self.preview_var.set(not self.preview_var.get())
-        self._apply_preview()
-        self.cam_btn.config(text=self.tr("cam_on" if self.preview_var.get() else "cam_off"))
-
-    # --- nút bấm ---
+    # ---------- chạy / dừng ----------
     def toggle_run(self):
         if self.session is None:
             self.start()
@@ -855,7 +353,6 @@ class ControlApp:
             self.stop()
 
     def start(self):
-        self._close_policy_menu()
         cfg = self.cfg if self.policy == self.cfg.policy else self.cfg.with_policy(self.policy)
         if self.session_factory:
             self.session = self.session_factory(cfg, self.log, self.preview_var.get())
@@ -863,17 +360,22 @@ class ControlApp:
             from ..live import LiveSession  # nhập muộn: cv2/mediapipe chỉ nạp khi bấm Bắt đầu
             self.session = LiveSession(cfg, log=self.log, preview=self.preview_var.get())
         self.session.dry_run = self.dry_run
+        self.error = None
         self.thread = threading.Thread(target=self.session.run, daemon=True)
         self.thread.start()
         self.status = StatusWindow(self.tk, self.root, self.stop, self.toggle_mode)
-        self.start_btn.config(text=self.tr("stop"), bg="#dc2626", activebackground="#b91c1c", skin="stop")
-        self._paint_policy()
-        self._set_info("starting")
+        self.start_btn.set(text="Dừng nhận cử chỉ", variant="danger", icon="stop")
+        self._refresh_sidebar()
 
     def stop(self):
         if self.session:
             self.session.request_stop()
-            self.start_btn.config(text=self.tr("stopping"), state="disabled")
+            self.start_btn.set(text="Đang dừng...", enabled=False)
+
+    # ---------- chế độ ----------
+    def _pick_mode(self, key):
+        if (key == "dry") != self.dry_run:
+            self.toggle_mode()
 
     def toggle_mode(self):
         new = not self.dry_run
@@ -881,240 +383,81 @@ class ControlApp:
             try:
                 import pynput.keyboard  # noqa: F401
             except Exception as e:
-                self.messagebox.showerror(self.tr("err_keys_t"), self.tr("err_keys", e=e))
+                self.messagebox.showerror("Không gửi được phím",
+                                          f"Máy chưa có thư viện pynput ({e}).\n\nCài bằng lệnh: pip install pynput, rồi mở lại ứng dụng.")
                 return
-            if not self.messagebox.askokcancel(self.tr("ask_real_t"), self.tr("ask_real")):
+            if not self.messagebox.askokcancel("Gửi phím thật?",
+                                               "Từ giờ cử chỉ sẽ bấm phím thật vào cửa sổ đang được chọn.\n\n"
+                                               "Hãy bấm vào cửa sổ PowerPoint trước khi trình chiếu."):
                 return
         if self.session:
             try:
                 self.session.set_dry_run(new)
             except Exception as e:
-                self.messagebox.showerror(self.tr("err_mode_t"), str(e))
+                self.messagebox.showerror("Không đổi được chế độ", f"{e}\n\nChế độ vẫn giữ như cũ.")
                 return
         self.dry_run = new
-        self._paint_mode()
+        self._refresh_sidebar()
 
+    # ---------- hướng dẫn ----------
     def toggle_guide(self):
-        """Bật / tắt phần hướng dẫn cử chỉ ngay trong cửa sổ này (không mở cửa sổ mới)."""
-        if self._anim:
-            return                                                   # đang chạy hiệu ứng: bỏ qua lần bấm
-        self._close_policy_menu(instant=True)
         if self.guide is None:
             from .gesture_guide import GuidePanel  # nhập muộn
-            self.guide = GuidePanel(self.tk, self.root, labels=getattr(self.cfg, "external_labels", {}), font=FONT, policy=self.policy, lang=self.lang)
-        opening = not self.guide.visible
-        if self.maximized:
-            self._slide_guide(opening)
-        else:
-            self._set_guide(opening)
-            self._layout()
-
-    def _set_guide(self, on):
-        if on:
-            self.guide.show(grid=dict(row=0, column=1, sticky="new", padx=(0, MARGIN), pady=14))  # cột phải của cùng cửa sổ
-            self.guide_btn.config(text=self.tr("guide_on"))
-        else:
+            self.guide = GuidePanel(self.tk, self.content, labels=getattr(self.cfg, "external_labels", {}), font=FONT, policy=self.policy)
+        if self.guide.visible:
+            if self.is_maximized():
+                self.set_maximized(False)
             self.guide.hide()
-            self.guide_btn.config(text=self.tr("guide_off"))
-
-    def _slide_guide(self, opening):
-        """Phóng to: cột điều khiển trượt (và co/giãn) giữa vị trí chính giữa và sát trái. Bật: trượt xong mới hiện hướng dẫn.
-        Tắt: ẩn hướng dẫn rồi cột trượt về giữa."""
-        start = self._col
-        if opening:
-            end = (MARGIN, MARGIN - 20, 1.0)
-            self._anim_done = lambda: self._set_guide(True)
+            self.guide_btn.set(variant="ghost")
         else:
-            self._set_guide(False)
-            self._layout()                                           # chỉ để lấy vị trí đích (chưa kịp hiện lên màn hình)
-            end = self._col
-            self._anim_done = None
-        self._anim_step(start, end, 0)
+            self.guide.show(padx=SPACE["lg"], pady=SPACE["lg"])
+            self.guide_btn.set(variant="soft")
+        self._fit()
 
-    def _anim_step(self, start, end, i):
-        t = min(1.0, i / GUIDE_ANIM_FRAMES)
-        e = 1 - (1 - t) ** 3                                         # nhanh rồi chậm dần
-        x0, y0, sc = (a + (b - a) * e for a, b in zip(start, end))
-        self._anim = {"x0": round(x0), "y0": round(y0), "scale": sc}
-        self._layout()
-        if i < GUIDE_ANIM_FRAMES:
-            self._anim_job = self.root.after(GUIDE_ANIM_MS, lambda: self._anim_step(start, end, i + 1))
-        else:
-            self._finish_guide_anim()
-
-    def _finish_guide_anim(self):
-        if self._anim_job:
-            self.root.after_cancel(self._anim_job)
-            self._anim_job = None
-        done, self._anim_done, self._anim = self._anim_done, None, None
-        if done:
-            done()
-        self._layout()
-
-    # --- bộ lọc lệnh (C1–C4) ---
-    def _policy_info(self):
-        return next(m for m in mode_list(self.cfg.policy, self.lang) if m["key"] == self.policy)
-
-    def open_policy_menu(self):
-        """Mở danh sách bộ lọc: trượt xuống ngay dưới nút, các nút phía dưới được đẩy xuống cùng. Vẽ trên Canvas chính
-        (nền trong suốt); khung là ảnh assets/frames/policy_menu.png nếu có. Bấm lần nữa, bấm ra ngoài hoặc Esc để đóng."""
-        if self.session:
-            return
-        if self.policy_open and not self._policy_closing:
-            self._close_policy_menu()
-            return
-        self._cancel_policy_job()
-        self.policy_open, self._policy_closing = True, False
-        self._policy_items = mode_list(self.cfg.policy, self.lang)
-        self.policy_menu_target = len(self._policy_items) * round(POLICY_ROW_H * self.scale) + 2 * round(POLICY_PAD * self.scale)
-        self._animate_policy_menu(max(1, self.policy_menu_height))
-
-    def _cancel_policy_job(self):
-        if self._policy_popup_job:
-            try:
-                self.root.after_cancel(self._policy_popup_job)
-            except Exception:
-                pass
-            self._policy_popup_job = None
-
-    def _animate_policy_menu(self, current):
-        if not self.policy_open or self._policy_closing:
-            return
-        target = self.policy_menu_target
-        self.policy_menu_height = min(target, current)
-        self._layout()                       # tăng chiều cao cửa sổ, đẩy các nút dưới xuống và vẽ lại danh sách
-        if current < target:
-            nxt = min(target, current + max(8, target // 7))
-            self._policy_popup_job = self.root.after(12, lambda: self._animate_policy_menu(nxt))
-
-    def _choose_policy(self, key):
-        self._close_policy_menu()
-        self.set_policy(key)
-
-    def _close_policy_menu(self, instant=False):
-        if not self.policy_open:
-            return
-        self._cancel_policy_job()
-        if instant:
-            self.policy_open = self._policy_closing = False
-            self.policy_menu_height = self.policy_menu_target = 0
-            self._layout()
-            return
-        self._policy_closing = True
-        self._collapse_policy_menu(self.policy_menu_height)
-
-    def _collapse_policy_menu(self, current):
-        nxt = max(0, current - max(8, self.policy_menu_target // 7))
-        self.policy_menu_height = nxt
-        if nxt > 0:
-            self._layout()
-            self._policy_popup_job = self.root.after(12, lambda: self._collapse_policy_menu(nxt))
-        else:
-            self.policy_open = self._policy_closing = False
-            self.policy_menu_target = 0
-            self._layout()
-
-    def _in_menu(self, px, py):
-        r = self._menu_rect
-        return bool(r) and r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]
-
-    def _menu_frame(self, w, h):
-        """Khung danh sách: hình trắng bo góc tự vẽ (cache theo cỡ)."""
-        key = ("menu", w, h)
-        if key not in self._images:
-            try:
-                self._images[key] = render.shape(self.cv, w, h, 8, fill="#ffffff", outline="#cfd4e5", width=1)
-            except Exception:
-                self._images[key] = None
-        return self._images[key]
-
-    def _draw_policy_menu(self):
-        cv = self.cv
-        cv.delete("pmenu")
-        self.menu_rows, self._menu_rect = [], None
-        h = self.policy_menu_height
-        if not self.policy_open or h <= 0:
-            return
-        s, b = self.scale, self.policy_btn
-        x, y, w = b.x, b.y + b.h + round(5 * s), b.w
-        self._menu_rect = (x, y, w, h)
-        frame = self._menu_frame(w, h) if h >= 16 else None
-        if frame:
-            cv.create_image(x, y, image=frame, anchor="nw", tags="pmenu")
-        rh, pad = round(POLICY_ROW_H * s), round(POLICY_PAD * s)
-        for i, m in enumerate(self._policy_items):
-            top = y + pad + i * rh
-            if top + rh > y + h:
-                break                                                   # chưa trượt tới dòng này
-            mid, on = top + rh // 2, m["key"] == self.policy
-            bg = cv.create_rectangle(x + pad, top, x + w - pad, top + rh - 2, fill="", outline="", tags="pmenu")
-            if on:
-                hl = render.shape(cv, w - 2 * pad + 2, rh - 2, 8, fill="#f1efff", outline="#5b3df5", width=1)
-                self._images[("hl", w, rh)] = hl
-                cv.create_image(x + pad - 1, top, image=hl, anchor="nw", tags="pmenu")
-            cv.create_text(x + round(20 * s), mid, text="●" if on else "○", fill="#5b3df5" if on else "#7c86a3",
-                           font=(FONT_BOLD, round(11 * s)), anchor="w", tags="pmenu")
-            cv.create_text(x + round(43 * s), mid, text=f"{m['tag']}   {m['title']}", fill="#172033",
-                           font=self.fonts["small"], anchor="w", tags="pmenu")
-            if not self._policy_closing and top + rh <= y + h - 1:
-                self.menu_rows.append(_MenuRow(self, m["key"], x, top, w, rh, bg, on))
-        cv.tag_raise("pmenu")
-
+    # ---------- bộ lọc lệnh (C1–C4) ----------
     def cycle_policy(self):
-        keys = [m["key"] for m in mode_list(self.cfg.policy, self.lang)]
+        keys = [m["key"] for m in mode_list(self.cfg.policy)]
         self.set_policy(keys[(keys.index(self.policy) + 1) % len(keys)])
 
     def set_policy(self, key: str):
         if self.session or key == self.policy:
             return
         self.policy = key
-        self._paint_policy()
+        self._refresh_sidebar()
         if self.guide:
             self.guide.set_policy(key)
-
-    def _paint_policy(self):
-        m = self._policy_info()
-        second = self.tr("policy_locked") if self.session else m["title"]
-        self.policy_btn.config(text=self.tr("policy", tag=m["tag"], second=second), state="disabled" if self.session else "normal", fg=TXT)
-
-    def _paint_mode(self):
-        if self.dry_run:
-            self.mode_btn.config(text=self.tr("tap"), bg="#f59e0b", activebackground="#d97706", fg="black", skin="tap")
-        else:
-            self.mode_btn.config(text=self.tr("real"), bg="#001AAF", activebackground="#00137F", fg="white", skin="real")
 
     def _apply_preview(self):
         if self.session:
             self.session.preview = self.preview_var.get()
 
-    # --- vòng cập nhật ---
+    # ---------- vòng cập nhật ----------
     def _tick(self):
         if self.session is not None:
             if self.thread is not None and not self.thread.is_alive():
                 self._finished()
             else:
                 snap = self.session.snapshot()
+                vm = view_model(snap, time.monotonic())
                 if self.status:
-                    self.status.draw(view_model(snap, time.monotonic(), self.lang))
+                    self.status.draw(vm)
+                meta = ""
                 if snap["running"]:
-                    self._set_info("running", fps=snap["fps"], seen=self.tr("hand" if snap["hand"] > 0.3 else "nohand"))
+                    seen = "thấy tay" if snap["hand"] > 0.3 else "chưa thấy tay"
+                    meta = f"{snap['fps']:.0f} khung/s · {seen}"
+                self.card.show(vm, self.dry_run, meta)
         self.root.after(60, self._tick)
 
     def _finished(self):
-        err = self.session.error
+        self.error = self.session.error
         self.session = self.thread = None
         if self.status:
             self.status.destroy()
             self.status = None
-        self.start_btn.config(text=self.tr("start"), bg="#16a34a", activebackground="#15803d", state="normal", skin="start")
-        self._paint_policy()
-        if err:
-            self._set_info("error", err=err)
-        else:
-            self._set_info("stopped")
+        self.start_btn.set(text="Bắt đầu nhận cử chỉ", variant="primary", icon="play", enabled=True)
+        self._refresh_sidebar()
 
     def close(self):
-        self._close_policy_menu(instant=True)
         if self.session:
             self.session.request_stop()
             if self.thread:
