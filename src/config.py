@@ -45,6 +45,10 @@ class Config:
     margin_weight: float = 0.20
     stability_weight: float = 0.15
     stability_window_ms: int = 800  # độ ổn định tính trên chuỗi khung hợp lệ trong ngần này ms (~5 bước GRU, khớp hold_frames=5)
+    stability_reset: bool = True    # True (gốc): khung không hợp lệ xóa lịch sử ổn định -> cửa sổ dài không có tác dụng; False: giữ lịch sử
+    # thí nghiệm tham số (mặc định tắt = hành vi cũ)
+    swipe_conf: float = 0.0         # C1-C4: ngưỡng gốc RIÊNG cho vuốt, tách khỏi `conf` của thumb up/down; 0 = dùng conf
+    grace_ms: int = 0               # C1-C4: bỏ qua khung rớt (không lệnh / dưới ngưỡng) ngắn hơn ngần này thay vì hủy ứng viên
     # abstain / combined: chưa chắc -> quan sát thêm tối đa abstain_wait_ms, vẫn không rõ -> từ chối
     abstain_wait_ms: int = 600
     clear_conf: float = 0.90        # dưới mức này (dù đã qua ngưỡng) coi là "chưa rõ", phải quan sát thêm
