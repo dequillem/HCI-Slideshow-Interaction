@@ -39,6 +39,7 @@ BTN_DIR = ASSETS / "buttons"              # <tên>.png, <tên>_hover.png, <tên>
 TITLE_IMG = ASSETS / "label.png"          # ảnh tiêu đề (không có thì dùng chữ)
 FONT_DIR = ASSETS / "fonts"
 KEY_SIZE = 30                              # ô phím trên nút (px ở cỡ thường; nút nhỏ tự co theo chiều cao)
+GUIDE_ANIM_FRAMES, GUIDE_ANIM_MS = 10, 16     # hiệu ứng trượt khi bật/tắt hướng dẫn lúc phóng to: số khung và ms mỗi khung
 POLICY_ROW_H, POLICY_PAD = 30, 6           # chiều cao một dòng của danh sách bộ lọc và lề trên/dưới
 
 STR = {
@@ -126,7 +127,7 @@ class CanvasButton:
         self.hover = self.down = False
         self.tag = f"cbtn{id(self)}"
         cv = app.cv
-        self.s_item = cv.create_rectangle(0, 0, 1, 1, fill="black", width=0, state="hidden", tags=self.tag)   # bóng đen (tạo trước để nằm dưới nút)
+        self.s_item = cv.create_polygon(0, 0, 0, 0, 0, 0, fill="black", width=0, state="hidden", tags=self.tag)   # vệt đen đùn liền (kiểu logo NY Post)
         self.r_item = cv.create_rectangle(0, 0, 1, 1, width=0, tags=self.tag)
         self.i_item = cv.create_image(0, 0, anchor="nw", state="hidden", tags=self.tag)
         self.t_item = cv.create_text(0, 0, justify="center", tags=self.tag)
@@ -170,7 +171,9 @@ class CanvasButton:
         cv, o, st = self.app.cv, self.opts, self._state()
         off = round(HOVER_SHIFT * self.app.scale) if st in ("hover", "down") else 0
         bx, by = self.x - off, self.y - off                      # vị trí vẽ của nút (nhích lên trái khi hover)
-        cv.coords(self.s_item, self.x, self.y, self.x + self.w, self.y + self.h)
+        d, x, y, w, h = off, self.x, self.y, self.w, self.h
+        cv.coords(self.s_item, x - d, y - d,  x - d + w, y - d,  x + w, y,
+                               x + w, y + h,  x, y + h,  x - d, y - d + h)       
         cv.itemconfig(self.s_item, state="normal" if off else "hidden")   # bóng đen đứng yên ở vị trí gốc, lộ ra khi nút nhích lên
         s, key = self.app.scale, o["key"]
         pad = round(BTN_PAD * s)
@@ -501,6 +504,8 @@ class ControlApp:
         self.menu_rows, self._menu_rect, self._policy_items = [], None, []
         self.policy_menu_height = 0  # chiều cao đang mở; dùng để đẩy các nút phía dưới xuống
         self.policy_menu_target = 0
+        self._col = (MARGIN, MARGIN - 20, 1.0)       # (x0, y0, scale) của cột điều khiển ở lần vẽ gần nhất
+        self._anim = self._anim_job = self._anim_done = None
         load_bundled_fonts()
         r = self.root = tk.Tk()
         r.title("HGISS")
@@ -616,6 +621,8 @@ class ControlApp:
             full_menu = len(mode_list(self.cfg.policy, self.lang)) * POLICY_ROW_H + 2 * POLICY_PAD + 5
             need = img_h + 70 + 4 * (BTN_H + 10) + (SMALL_H + 10) + 24 + full_menu
             self.scale = max(1.0, min(MAX_SCALE, (ch - 20) / need))
+        if self._anim:
+            self.scale = self._anim["scale"]
         self._make_fonts()
         s = self.scale
         bw, bh, gap = round(BTN_W * s), round(BTN_H * s), round(10 * s)
@@ -635,6 +642,9 @@ class ControlApp:
                 x0, y0 = MARGIN, MARGIN - 20         # cỡ thường: cách viền trái và trên 50 px, giống lúc bật hướng dẫn
             r.columnconfigure(0, weight=1, minsize=0)
             r.columnconfigure(1, weight=0)
+        if self._anim:
+            x0, y0 = self._anim["x0"], self._anim["y0"]
+        self._col = (x0, y0, self.scale)
         self._draw_background((cw, ch))
         y = y0 + self._draw_title(x0 + bw // 2, y0, bw)
         self.info_card.place(x0, y, bw, bh)
@@ -718,6 +728,8 @@ class ControlApp:
         on = bool(on)
         if on == self.maximized:
             return
+        if self._anim:
+            self._finish_guide_anim()
         self._close_policy_menu(instant=True)
         self.maximized = on
         self._zoom(on)
@@ -883,17 +895,60 @@ class ControlApp:
         self._paint_mode()
 
     def toggle_guide(self):
-        """Bật / tắt phần hướng dẫn cử chỉ ngay trong cửa sổ này (không mở cửa sổ mới)."""
+        """Bật / tắt phần hướng dẫn cử chỉ"""
+        if self._anim:
+            return                                                   # đang chạy hiệu ứng: bỏ qua lần bấm
         self._close_policy_menu(instant=True)
         if self.guide is None:
             from .gesture_guide import GuidePanel  # nhập muộn
             self.guide = GuidePanel(self.tk, self.root, labels=getattr(self.cfg, "external_labels", {}), font=FONT, policy=self.policy, lang=self.lang)
-        if self.guide.visible:
-            self.guide.hide()
-            self.guide_btn.config(text=self.tr("guide_off"))
+        opening = not self.guide.visible
+        if self.maximized:
+            self._slide_guide(opening)
         else:
+            self._set_guide(opening)
+            self._layout()
+
+    def _set_guide(self, on):
+        if on:
             self.guide.show(grid=dict(row=0, column=1, sticky="new", padx=(0, MARGIN), pady=14))  # cột phải của cùng cửa sổ
             self.guide_btn.config(text=self.tr("guide_on"))
+        else:
+            self.guide.hide()
+            self.guide_btn.config(text=self.tr("guide_off"))
+
+    def _slide_guide(self, opening):
+        """Phóng to: cột điều khiển trượt (và co/giãn) giữa vị trí chính giữa và sát trái. Bật: trượt xong mới hiện hướng dẫn.
+        Tắt: ẩn hướng dẫn rồi cột trượt về giữa."""
+        start = self._col
+        if opening:
+            end = (MARGIN, MARGIN - 20, 1.0)
+            self._anim_done = lambda: self._set_guide(True)
+        else:
+            self._set_guide(False)
+            self._layout()                                           # chỉ để lấy vị trí đích (chưa kịp hiện lên màn hình)
+            end = self._col
+            self._anim_done = None
+        self._anim_step(start, end, 0)
+
+    def _anim_step(self, start, end, i):
+        t = min(1.0, i / GUIDE_ANIM_FRAMES)
+        e = 1 - (1 - t) ** 3                                         # nhanh rồi chậm dần
+        x0, y0, sc = (a + (b - a) * e for a, b in zip(start, end))
+        self._anim = {"x0": round(x0), "y0": round(y0), "scale": sc}
+        self._layout()
+        if i < GUIDE_ANIM_FRAMES:
+            self._anim_job = self.root.after(GUIDE_ANIM_MS, lambda: self._anim_step(start, end, i + 1))
+        else:
+            self._finish_guide_anim()
+
+    def _finish_guide_anim(self):
+        if self._anim_job:
+            self.root.after_cancel(self._anim_job)
+            self._anim_job = None
+        done, self._anim_done, self._anim = self._anim_done, None, None
+        if done:
+            done()
         self._layout()
 
     # --- bộ lọc lệnh (C1–C4) ---
@@ -901,8 +956,7 @@ class ControlApp:
         return next(m for m in mode_list(self.cfg.policy, self.lang) if m["key"] == self.policy)
 
     def open_policy_menu(self):
-        """Mở danh sách bộ lọc: trượt xuống ngay dưới nút, các nút phía dưới được đẩy xuống cùng. Vẽ trên Canvas chính
-        (nền trong suốt); khung là ảnh assets/frames/policy_menu.png nếu có. Bấm lần nữa, bấm ra ngoài hoặc Esc để đóng."""
+        """Mở danh sách bộ lọc: trượt xuống ngay dưới nút, các nút phía dưới được đẩy xuống cùng."""
         if self.session:
             return
         if self.policy_open and not self._policy_closing:
@@ -964,7 +1018,6 @@ class ControlApp:
         return bool(r) and r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]
 
     def _menu_frame(self, w, h):
-        """Khung danh sách: hình trắng bo góc tự vẽ (cache theo cỡ)."""
         key = ("menu", w, h)
         if key not in self._images:
             try:
@@ -1040,7 +1093,7 @@ class ControlApp:
             else:
                 snap = self.session.snapshot()
                 if self.status:
-                    self.status.draw(view_model(snap, time.monotonic()))
+                    self.status.draw(view_model(snap, time.monotonic(), self.lang))
                 if snap["running"]:
                     self._set_info("running", fps=snap["fps"], seen=self.tr("hand" if snap["hand"] > 0.3 else "nohand"))
         self.root.after(60, self._tick)
