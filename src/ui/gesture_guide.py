@@ -1,48 +1,47 @@
-"""Phần "Hướng dẫn" nằm TRONG cửa sổ điều khiển (không mở cửa sổ mới). Ba nút ở đỉnh chọn trang:
-  Cách dùng (mặc định khi mở) | Bộ cử chỉ (4 cử chỉ, đổi bằng Trước / Sau hoặc phím ← →) | Chế độ (bộ lọc C1–C4).
-Vuốt có 2 khung tự đổi mỗi 0,5 giây; like / dislike là ảnh tĩnh; Cách dùng và Chế độ là chữ.
-
-Ảnh vẽ sẵn 4 cỡ (src/ui/assets/<cỡ>/*.png). Cửa sổ càng lớn (phóng to kín màn hình) thì chọn ảnh càng to, vẫn nét,
-không cần thư viện ảnh (Tk đọc thẳng PNG)."""
+"""Phần "Hướng dẫn" ở bên phải cửa sổ điều khiển. Ba tab:
+  Cách dùng (mặc định) | Bộ cử chỉ (4 cử chỉ: Trước / Sau, chấm tròn hoặc phím ← →) | Bộ lọc lệnh (C1–C4).
+Vuốt có 2 khung tự đổi mỗi 0,5 giây; like / dislike là ảnh tĩnh.
+Tranh cử chỉ (src/ui/assets/<cỡ>/*.png) được co giãn mượt, bo góc, lấy hết chỗ trống của trang."""
 from __future__ import annotations
 
 from pathlib import Path
 
+from . import render
 from .status_model import CMD_VI
-COLOR = {"card": "#ffffff", "border": "#d1d5db", "text": "#111827", "muted": "#4b5563"}
+from .theme import BADGE, C, RADIUS, RADIUS_SM, SPACE, TYPE, px
+from .widgets import Button, Card, Tabs, keycap, measure
 
 ASSETS = Path(__file__).parent / "assets"
-SIZES = (360, 480)   # các cỡ ảnh có sẵn (px)
+SIZES = (360, 480)             # các cỡ ảnh gốc có sẵn (px)
+PIC_MIN, PIC_MAX, PIC_STEP = px(200), px(520), px(20)
 FRAME_MS = 500                 # mỗi khung của cử chỉ động hiện 0,5 giây
 
 # key (khớp nhãn model / external_labels), tiêu đề, cách làm, các khung ảnh
 GESTURES = [
     {"key": "swipe_left", "title": "Vuốt trái",
-     "how": "Mở bàn tay, đưa nhanh từ PHẢI sang TRÁI rồi dừng.", "frames": ["swipe_left_1.png", "swipe_left_2.png"]},
+     "how": "Mở bàn tay, đưa nhanh từ phải sang trái rồi dừng.", "frames": ["swipe_left_1.png", "swipe_left_2.png"]},
     {"key": "swipe_right", "title": "Vuốt phải",
-     "how": "Mở bàn tay, đưa nhanh từ TRÁI sang PHẢI rồi dừng.", "frames": ["swipe_right_1.png", "swipe_right_2.png"]},
-    {"key": "like", "title": "Like (vào trình chiếu)",
-     "how": "Nắm tay, ngón cái chìa LÊN, giữ yên khoảng 0,6 giây.", "frames": ["like.png"],
-     "command": "Vào chế độ trình chiếu"},
-    {"key": "dislike", "title": "Dislike (thoát trình chiếu)",
-     "how": "Nắm tay, ngón cái chìa XUỐNG, giữ yên khoảng 0,6 giây.", "frames": ["dislike.png"],
-     "command": "Thoát chế độ trình chiếu"},
+     "how": "Mở bàn tay, đưa nhanh từ trái sang phải rồi dừng.", "frames": ["swipe_right_1.png", "swipe_right_2.png"]},
+    {"key": "like", "title": "Like",
+     "how": "Nắm tay, ngón cái chìa lên, giữ yên khoảng 0,6 giây.", "frames": ["like.png"], "command": "Vào trình chiếu"},
+    {"key": "dislike", "title": "Dislike",
+     "how": "Nắm tay, ngón cái chìa xuống, giữ yên khoảng 0,6 giây.", "frames": ["dislike.png"], "command": "Thoát trình chiếu"},
 ]
 DEFAULT_CMD = {"swipe_left": "previous", "swipe_right": "next"}   # dùng khi config không có external_labels
 
-# Bộ lọc lệnh (Intent Gate policy): tag, tên ngắn, mô tả. C1–C4 chọn được bằng nút "Bộ lọc" trong giao diện.
+# Bộ lọc lệnh (Intent Gate policy): tag, tên ngắn, mô tả.
 CHOICES = ("fixed", "adaptive", "abstain", "combined")
 MODE_INFO = {
     "fixed": ("C1", "Ngưỡng cố định",
               "Nhận lệnh khi độ tin cậy đạt ngưỡng và cử chỉ được giữ đủ lâu. Ngưỡng và thời gian giữ không đổi."),
     "adaptive": ("C2", "Ngưỡng thích ứng",
-                 "Như C1, nhưng khi tay di chuyển nhanh thì ngưỡng và thời gian giữ tự tăng lên, nên khó nhận nhầm hơn."),
-    "abstain": ("C3", "Cố định + từ chối",
-                "Như C1, nhưng khi hai cử chỉ có xác suất sát nhau thì hệ thống coi là chưa chắc và bỏ qua."),
-    "combined": ("C4", "Thích ứng + từ chối",
+                 "Như C1, nhưng ngưỡng tự tăng khi cử chỉ mơ hồ (hai lựa chọn sát nhau, nhãn chưa ổn định)."),
+    "abstain": ("C3", "Cố định + chưa chắc",
+                "Như C1, nhưng khi còn nghi ngờ (chưa đủ chắc, vừa thấy chiều ngược) thì quan sát thêm; vẫn không rõ thì từ chối."),
+    "combined": ("C4", "Thích ứng + chưa chắc",
                  "Kết hợp C2 và C3: chặt nhất, ít nhận nhầm nhất, đổi lại dễ bỏ sót hơn."),
     "swipe": ("Mặc định", "Vuốt trực tiếp",
-              "Không cần cử chỉ kích hoạt: vuốt được nhận ngay (giữ rất ngắn), vẫn có ngưỡng tin cậy và thời gian nghỉ."),
+              "Cấu hình demo: vuốt được nhận ngay (giữ rất ngắn), vẫn có ngưỡng tin cậy và thời gian nghỉ."),
     "naive": ("Không lọc", "Không có Intent Gate", "Mốc so sánh: nhận mọi lệnh ngay, không kiểm tra gì."),
 }
 
@@ -59,153 +58,204 @@ def mode_list(current: str = None) -> list:
     return out
 
 
-USAGE_TEXT = (
-    "Chế độ TẬP / GỬI THẬT (phím M)\n"
-    "• TẬP: nhận cử chỉ nhưng không gửi phím, dùng để làm quen.\n"
-    "• GỬI THẬT: phím gửi vào cửa sổ đang được chọn, hãy bấm vào PowerPoint đang trình chiếu.\n\n"
-    "Cửa sổ trạng thái nhỏ (hiện khi đang chạy)\n"
-    "• Kéo để dời, chuột phải để dừng hoặc đổi chế độ.\n\n"
-    "Phím tắt\n"
-    "S bắt đầu / dừng · M tập / gửi thật · P bộ lọc lệnh · G hướng dẫn · C camera · ← → chuyển cử chỉ (tab Bộ cử chỉ)"
-)
+# Trang "Cách dùng": (tiêu đề mục, [dòng])
+USAGE = [
+    ("1. Bắt đầu", ["Bấm Bắt đầu nhận cử chỉ, đứng gần camera, giơ một tay vào khung hình.",
+                    "Vuốt phải: slide tiếp. Vuốt trái: slide trước. Like / Dislike: vào / thoát trình chiếu."]),
+    ("2. Tập trước khi trình chiếu", ["Chế độ Tập chỉ hiện lệnh nhận được, không bấm phím.",
+                                       "Khi đã quen, chọn Gửi phím thật rồi bấm vào cửa sổ PowerPoint."]),
+    ("3. Theo dõi khi đang chạy", ["Ô trạng thái nhỏ ở góc phải màn hình cho biết hệ thống đang chờ, đang giữ, hay đã nhận lệnh.",
+                                    "Kéo để dời ô đó; chuột phải để dừng hoặc đổi chế độ."]),
+]
+SHORTCUTS = [("S", "Bắt đầu / dừng"), ("M", "Tập / gửi phím thật"), ("P", "Đổi bộ lọc lệnh"),
+             ("I", "Hiện / ẩn hướng dẫn"), ("C", "Hiện camera"), ("← →", "Đổi cử chỉ")]
 
-TABS = (("usage", "Cách dùng"), ("gestures", "Bộ cử chỉ"), ("modes", "Chế độ"))   # ba nút ở đỉnh phần hướng dẫn
-TAB_ON, TAB_OFF = ("#3fa9f5", "white"), ("#e5e7eb", "black")                      # (nền, chữ) của tab đang chọn / không chọn
+TABS = (("usage", "Cách dùng"), ("gestures", "Bộ cử chỉ"), ("modes", "Bộ lọc lệnh"))
 
 
 def command_text(gesture: dict, labels: dict) -> str:
-    """Dòng "Lệnh: ..." của một cử chỉ: lấy từ external_labels trong config (vuốt) hoặc ghi chú cố định (like/dislike)."""
+    """Lệnh của một cử chỉ: lấy từ external_labels trong config (vuốt) hoặc ghi chú cố định (like/dislike)."""
     if gesture.get("command"):
-        return "Lệnh: " + gesture["command"]
+        return gesture["command"]
     cmd = (labels or {}).get(gesture["key"]) or DEFAULT_CMD.get(gesture["key"])
-    return "Lệnh: " + CMD_VI.get(cmd, cmd) if cmd else ""
+    return CMD_VI.get(cmd, cmd) if cmd else ""
 
 
 def pick_size(avail: int) -> int:
-    """Cỡ ảnh lớn nhất không vượt `avail` px (tối thiểu cỡ nhỏ nhất)."""
-    fit = [s for s in SIZES if s <= avail]
-    return fit[-1] if fit else SIZES[0]
+    """Ảnh gốc nhỏ nhất đủ nét cho `avail` px (sau đó co giãn mượt)."""
+    fit = [s for s in SIZES if s >= avail]
+    return fit[0] if fit else SIZES[-1]
 
 
 class GuidePanel:
-    """Khung hướng dẫn, nhúng vào cửa sổ cha. show()/hide() bật tắt; mở ra luôn ở tab "Cách dùng"; hide() dừng hoạt ảnh."""
+    """Thẻ hướng dẫn, nhúng vào khung cha. show()/hide() bật tắt; mở ra ở tab "Cách dùng"; hide() dừng hoạt ảnh."""
 
-    def __init__(self, tk, parent, labels: dict = None, font: str = "TkDefaultFont", policy: str = None):
+    def __init__(self, tk, parent, labels: dict = None, font: str = None, policy: str = None):
         self.tk, self.labels, self.policy = tk, labels or {}, policy
-        self.tab, self.idx, self.frame_i, self.size, self.visible, self._job = "usage", 0, 0, SIZES[0], False, None
-        self.images = {}                          # giữ tham chiếu PhotoImage, nếu không Tk sẽ xóa ảnh
-        card = COLOR["card"]
-        f = self.frame = tk.Frame(parent, bg=card, highlightthickness=1, highlightbackground=COLOR["border"])
-        bar = tk.Frame(f, bg=card)                # ba nút chọn trang
-        bar.pack(fill="x", padx=10, pady=(10, 0))
-        self.tab_btns = {}
-        for col, (key, text) in enumerate(TABS):
-            bar.columnconfigure(col, weight=1, uniform="tab")
-            b = tk.Button(bar, text=text, font=(font, 10, "bold"), bd=0, relief="flat", cursor="hand2", pady=6,
-                          command=lambda k=key: self.select(k))
-            b.grid(row=0, column=col, sticky="ew", padx=2)
-            self.tab_btns[key] = b
-        self.step = tk.Label(f, bg=card, fg=COLOR["muted"], font=(font, 9))
-        self.step.pack(pady=(8, 0))
-        self.name = tk.Label(f, bg=card, fg=COLOR["text"], font=(font, 14, "bold"))
-        self.name.pack()
-        self.pic = tk.Label(f, bg=card)
-        self.pic.pack(padx=12, pady=6, expand=True)
-        self.how = tk.Label(f, bg=card, fg=COLOR["text"], font=(font, 10), wraplength=280, justify="center")
-        self.how.pack(padx=10)
-        self.cmd = tk.Label(f, bg=card, fg="#2563eb", font=(font, 10, "bold"), wraplength=280, justify="center")
-        self.cmd.pack(pady=(2, 0))
-        self.nav = tk.Frame(f, bg=card)           # Trước / Sau: chỉ hiện ở tab Bộ cử chỉ
-        tk.Button(self.nav, text="‹ Trước", width=9, font=(font, 10), command=lambda: self.go(-1)).pack(side="left", padx=6)
-        tk.Button(self.nav, text="Sau ›", width=9, font=(font, 10), command=lambda: self.go(1)).pack(side="left", padx=6)
-        f.bind("<Configure>", self._resize)
+        self.tab, self.idx, self.frame_i, self.visible, self._job = "usage", 0, 0, False, None
+        self.pic_size = px(320)
+        self.frame = Card(parent, fill_height=True)
+        f = self.frame.inner
+        self.tabs = Tabs(f, TABS, self.tab, self.select)
+        self.tabs.pack(fill="x", padx=SPACE["xl"], pady=(SPACE["sm"], 0))
+        self.body = tk.Frame(f, bg=C["surface"])
+        self.body.pack(fill="both", expand=True, padx=SPACE["xl"], pady=(SPACE["lg"], SPACE["xl"]))
+        self.pages = {"usage": self._build_usage(), "gestures": self._build_gestures(), "modes": tk.Frame(self.body, bg=C["surface"])}
+        self.body.bind("<Configure>", lambda _e: self._resize())
         top = parent.winfo_toplevel()
-        top.bind("<Left>", self._arrow, add="+")      # phím ← → chuyển cử chỉ khi hướng dẫn đang hiện ở tab Bộ cử chỉ
+        top.bind("<Left>", self._arrow, add="+")
         top.bind("<Right>", self._arrow, add="+")
 
+    # ---------- dựng trang ----------
+    def _label(self, parent, text="", style="body", fg=None, bg=None, wrap=False, **kw):
+        lab = self.tk.Label(parent, text=text, bg=bg or parent["bg"], fg=fg or C["text"], font=TYPE[style], **kw)
+        if wrap:   # ngắt dòng theo độ rộng thật của khung chứa
+            parent.bind("<Configure>", lambda e, l=lab: l.config(wraplength=max(px(160), e.width - px(4))), add="+")
+        return lab
+
+    def _badge(self, parent, text, color):
+        w, h = max(px(64), measure(TYPE["caps"], text) + px(16)), px(22)
+        cv = self.tk.Canvas(parent, width=w, height=h, bg=parent["bg"], highlightthickness=0)
+        cv.create_image(0, 0, anchor="nw", image=render.shape(cv, w, h, RADIUS_SM, fill=color))
+        cv.create_text(w / 2, h / 2, text=text, font=TYPE["caps"], fill=C["on_color"])
+        return cv
+
+    def _build_usage(self):
+        tk = self.tk
+        p = tk.Frame(self.body, bg=C["surface"])
+        self._label(p, "Cách dùng", "title").pack(anchor="w")
+        for head, lines in USAGE:
+            self._label(p, head, "heading").pack(anchor="w", pady=(SPACE["lg"], SPACE["xs"]))
+            for line in lines:
+                box = tk.Frame(p, bg=C["surface"])
+                box.pack(fill="x")
+                self._label(box, line, fg=C["text_2"], justify="left", anchor="w", wrap=True).pack(fill="x", pady=px(1))
+        self._label(p, "Phím tắt", "heading").pack(anchor="w", pady=(SPACE["xl"], SPACE["sm"]))
+        grid = tk.Frame(p, bg=C["surface"])
+        grid.pack(anchor="w")
+        for i, (key, what) in enumerate(SHORTCUTS):
+            r, c = divmod(i, 2)
+            keycap(grid, key).grid(row=r, column=2 * c, sticky="w", padx=(0, SPACE["sm"]), pady=SPACE["xs"])
+            self._label(grid, what, fg=C["text_2"]).grid(row=r, column=2 * c + 1, sticky="w", padx=(0, SPACE["xl"]))
+        return p
+
+    def _build_gestures(self):
+        tk = self.tk
+        p = tk.Frame(self.body, bg=C["surface"])
+        head = tk.Frame(p, bg=C["surface"])
+        head.pack(fill="x")
+        self.name = self._label(head, "", "title")
+        self.name.pack(side="left")
+        self.dots = tk.Frame(head, bg=C["surface"])
+        self.dots.pack(side="right")
+        self.dot_items = []
+        for i in range(len(GESTURES)):
+            d = tk.Canvas(self.dots, width=px(20), height=px(20), bg=C["surface"], highlightthickness=0, cursor="hand2")
+            d.pack(side="left")
+            d.bind("<Button-1>", lambda _e, k=i: self._goto(k))
+            self.dot_items.append(d)
+        self.cmd = self._label(p, "", "body_b", fg=C["accent_text"])
+        self.cmd.pack(anchor="w", pady=(SPACE["xs"], 0))
+        self.pic = tk.Label(p, bg=C["surface"], bd=0)
+        self.pic.pack(pady=SPACE["md"], expand=True)
+        box = tk.Frame(p, bg=C["surface"])
+        box.pack(fill="x")
+        self.how = self._label(box, "", fg=C["text_2"], justify="center", wrap=True)
+        self.how.pack(fill="x")
+        nav = tk.Frame(p, bg=C["surface"])
+        nav.pack(pady=(SPACE["lg"], 0))
+        Button(nav, "Trước", lambda: self.go(-1), variant="secondary", width=px(136), shortcut="←").pack(side="left", padx=SPACE["xs"])
+        Button(nav, "Sau", lambda: self.go(1), variant="primary", width=px(136), shortcut="→").pack(side="left", padx=SPACE["xs"])
+        return p
+
+    def _fill_modes(self):
+        """Trang Bộ lọc lệnh dựng lại mỗi lần mở (bộ lọc đang chọn có thể đã đổi)."""
+        tk, p = self.tk, self.pages["modes"]
+        for w in p.winfo_children():
+            w.destroy()
+        self._label(p, "Bộ lọc lệnh", "title").pack(anchor="w")
+        self._label(p, "Quyết định khi nào một cử chỉ được coi là lệnh. Đổi ở thanh bên khi chưa chạy.",
+                    fg=C["text_3"], style="small").pack(anchor="w", pady=(SPACE["xs"], SPACE["md"]))
+        for m in mode_list(self.policy):
+            on = m["key"] == self.policy
+            bg = C["accent_soft"] if on else C["surface"]
+            card = Card(p, fill=bg, shadow=None, outline=C["accent"] if on else C["border"], pad=SPACE["md"], radius=RADIUS)
+            card.pack(fill="x", pady=SPACE["xs"])
+            row = card.inner
+            self._badge(row, m["tag"], BADGE.get(m["tag"], C["neutral"])).pack(side="left", anchor="n", padx=(0, SPACE["md"]))
+            text = tk.Frame(row, bg=bg)
+            text.pack(side="left", fill="x", expand=True)
+            head = tk.Frame(text, bg=bg)
+            head.pack(fill="x")
+            self._label(head, m["title"], "body_b").pack(side="left")
+            if on:
+                self._label(head, "Đang chọn", "small_b", fg=C["accent_text"]).pack(side="right")
+            self._label(text, m["desc"], "small", fg=C["text_2"], justify="left", anchor="w", wrap=True).pack(fill="x")
+
+    # ---------- điều hướng ----------
     def _arrow(self, event) -> None:
         if self.visible and self.tab == "gestures":
             self.go(-1 if event.keysym == "Left" else 1)
 
     def set_policy(self, key: str) -> None:
-        """Báo bộ lọc đang chọn để tab "Chế độ" đánh dấu."""
         self.policy = key
         if self.visible and self.tab == "modes":
             self._refresh()
 
-    # --- bật / tắt ---
-    def show(self, grid: dict = None) -> None:
-        if grid:
-            self.frame.grid(**grid)
-        else:
-            self.frame.pack(fill="both", expand=True, padx=14, pady=4)
+    def show(self, **pack) -> None:
+        self.frame.pack(fill="both", expand=True, **pack)
         self.visible = True
-        self.tab, self.idx = "usage", 0           # mặc định mở ở "Cách dùng"
+        self.tab, self.idx = "usage", 0
         self._refresh()
 
     def hide(self) -> None:
         self._cancel()
-        self.frame.grid_forget()
         self.frame.pack_forget()
         self.visible = False
 
-    # --- chọn trang ---
     def select(self, tab: str) -> None:
         self.tab = tab
         self._refresh()
 
     def go(self, step: int) -> None:
-        """Cử chỉ trước / sau (vòng tròn); chỉ có nghĩa ở tab Bộ cử chỉ."""
         if self.tab != "gestures":
             return
-        self.idx = (self.idx + step) % len(GESTURES)
-        self._refresh()
+        self._goto((self.idx + step) % len(GESTURES))
 
-    def _modes_text(self) -> str:
-        lines = []
-        for m in mode_list(self.policy):
-            mark = "▶ " if m["key"] == self.policy else "    "
-            lines.append(f"{mark}{m['tag']} · {m['title']}\n      {m['desc']}")
-        head = "C1–C4 cần làm cử chỉ kích hoạt (ARM) trước khi ra lệnh. Chọn bằng nút Bộ lọc (phím P), đổi được khi chưa bấm Bắt đầu.\n\n"
-        return head + "\n\n".join(lines)
+    def _goto(self, i: int) -> None:
+        self.idx = i
+        self._refresh()
 
     def _refresh(self) -> None:
         self._cancel()
-        for key, b in self.tab_btns.items():
-            bg, fg = TAB_ON if key == self.tab else TAB_OFF
-            b.config(bg=bg, fg=fg, activebackground=bg, activeforeground=fg)
+        self.tabs.set(self.tab)
+        for key, page in self.pages.items():
+            if key != self.tab:
+                page.pack_forget()
+        if self.tab == "modes":
+            self._fill_modes()
+        self.pages[self.tab].pack(fill="both", expand=True)
         self.frame_i = 0
         if self.tab == "gestures":
             g = GESTURES[self.idx]
-            self.step.config(text=f"Cử chỉ {self.idx + 1} / {len(GESTURES)}")
+            for i, d in enumerate(self.dot_items):
+                d.delete("all")
+                img = (render.circle(d, px(10), fill=C["accent"]) if i == self.idx
+                       else render.circle(d, px(10), outline=C["border_ui"], width=px(1.5)))
+                d.create_image(px(10), px(10), image=img)
             self.name.config(text=g["title"])
-            self.pic.pack(padx=12, pady=6, expand=True, before=self.how)
-            self.how.config(text=g["how"], justify="center")
-            self.how.pack_configure(anchor="center", fill="none")
-            self.cmd.config(text=command_text(g, self.labels))
-            self.nav.pack(pady=8)
+            self.cmd.config(text="Lệnh: " + command_text(g, self.labels))
+            self.how.config(text=g["how"])
             self._draw()
-            return
-        self.step.config(text="")                 # tab chữ: ẩn ảnh và Trước / Sau, chữ canh trái
-        self.name.config(text="Cách dùng" if self.tab == "usage" else "Chế độ lọc lệnh (C1–C4)")
-        self.pic.pack_forget()
-        self.nav.pack_forget()
-        self.how.config(text=USAGE_TEXT if self.tab == "usage" else self._modes_text(), justify="left")
-        self.how.pack_configure(anchor="w", fill="x")
-        self.cmd.config(text="")
-
-    def _image(self, filename: str):
-        key = (self.size, filename)
-        if key not in self.images:
-            self.images[key] = self.tk.PhotoImage(file=str(ASSETS / str(self.size) / filename))
-        return self.images[key]
+            self.frame.after_idle(self._resize)     # cỡ ảnh chỉ tính được khi trang cử chỉ đang hiện
 
     def _draw(self) -> None:
         if self.tab != "gestures":
             return
         g = GESTURES[self.idx]
-        self.pic.config(image=self._image(g["frames"][self.frame_i]))
-        if len(g["frames"]) > 1 and self.visible:   # cử chỉ động: đổi khung mỗi 0,5 giây
+        src = ASSETS / str(pick_size(self.pic_size)) / g["frames"][self.frame_i]
+        self.pic.config(image=render.picture(self.pic, src, self.pic_size, RADIUS + px(6)))
+        if len(g["frames"]) > 1 and self.visible:
             self.frame_i = (self.frame_i + 1) % len(g["frames"])
             self._job = self.frame.after(FRAME_MS, self._draw)
 
@@ -214,15 +264,16 @@ class GuidePanel:
             self.frame.after_cancel(self._job)
             self._job = None
 
-    def _resize(self, _event=None) -> None:
-        """Cửa sổ rộng/cao hơn mức nội dung cần ("slack") thì dùng ảnh to hơn; hẹp lại thì dùng ảnh nhỏ hơn.
-        Tính theo (cỡ ảnh hiện tại + phần dư) nên không dao động qua lại."""
-        slack = self.frame.winfo_height() - self.frame.winfo_reqheight()
-        avail = min(self.size + slack, self.frame.winfo_width() - 30)
-        new = pick_size(avail)
-        wrap = max(220, self.frame.winfo_width() - 30)
-        self.how.config(wraplength=wrap)
-        self.cmd.config(wraplength=wrap)
-        if new != self.size:
-            self.size = new
+    def _resize(self) -> None:
+        """Tranh cử chỉ lấy hết chỗ còn trống của trang (theo bước PIC_STEP để không vẽ lại liên tục)."""
+        if self.tab != "gestures" or not self.visible:
+            return
+        page = self.pages["gestures"]
+        page.update_idletasks()
+        other = page.winfo_reqheight() - self.pic.winfo_reqheight() - 2 * SPACE["md"]
+        avail = min(self.body.winfo_height() - other - 2 * SPACE["md"], self.body.winfo_width())
+        new = max(PIC_MIN, min(PIC_MAX, avail // PIC_STEP * PIC_STEP))
+        if new != self.pic_size:
+            self.pic_size = new
+            self._cancel()
             self._draw()

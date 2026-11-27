@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-CMD_VI = {"next": "Slide tiếp", "previous": "Slide trước", "play_pause": "Phát / dừng", "start_show": "Vào trình chiếu", "exit_show": "Thoát"}
-LAST_CMD_SHOW_S = 1.5 
+from .theme import C
+
+CMD_VI = {"next": "Slide tiếp", "previous": "Slide trước", "play_pause": "Phát / dừng", "start_show": "Vào trình chiếu", "exit_show": "Thoát trình chiếu"}
+LAST_CMD_SHOW_S = 1.5
+# trạng thái Intent Gate -> (nhãn, màu nền của nhãn, gợi ý). Màu đều đạt >= 4.5:1 với chữ trắng.
 STATE_VIEW = {
-    "IDLE": ("CHỜ", "#505050", "Mở bàn tay để bắt đầu"),
-    "ARMED": ("SẴN SÀNG", "#14AA4B", "Làm cử chỉ lệnh"),
-    "COMMAND": ("GIỮ YÊN", "#0F7F36", "Giữ cử chỉ thêm chút"),
-    "UNCERTAIN": ("CHƯA CHẮC", "#FF6A00", "Giữ rõ hơn"),
-    "REJECT": ("KHÔNG RÕ", "#DC2828", "Thử lại"),
-    "CONFIRM": ("XÁC NHẬN", "#D2AA06", "Like = Có, Dislike = Không"),
-    "EXECUTE": ("ĐÃ NHẬN", "#2864EB", ""),
-    "COOLDOWN": ("NGHỈ", "#6D28D9", "Chờ giây lát"),
+    "IDLE": ("CHỜ", C["neutral"], "Giơ tay vào khung hình"),
+    "ARMED": ("SẴN SÀNG", C["success"], "Làm cử chỉ lệnh"),
+    "COMMAND": ("GIỮ YÊN", C["teal"], "Giữ cử chỉ thêm chút"),
+    "UNCERTAIN": ("CHƯA CHẮC", C["warning"], "Làm cử chỉ rõ hơn"),
+    "REJECT": ("KHÔNG RÕ", C["danger"], "Thử lại"),
+    "CONFIRM": ("XÁC NHẬN", C["warning"], "Like = Có, Dislike = Không"),
+    "EXECUTE": ("ĐÃ NHẬN", C["accent"], ""),
+    "COOLDOWN": ("NGHỈ", C["violet"], "Chờ giây lát"),
 }
-OFF_COLOR = "#374151"
-MODE_VIEW = {True: ("● TẬP", "#D2AA06"), False: ("● GỬI THẬT", "#3FA9F5")}
+OFF_COLOR = "#334155"
+# chế độ -> (chữ, màu chấm trên nền tối của cửa sổ trạng thái)
+MODE_VIEW = {True: ("TẬP", "#FBBF24"), False: ("GỬI THẬT", "#F87171")}
 
 
 def view_model(snap: dict, now: float) -> dict:
@@ -23,14 +27,14 @@ def view_model(snap: dict, now: float) -> dict:
     if not snap.get("running"):
         if snap.get("starting"):
             return {**base, "title": "KHỞI ĐỘNG", "color": OFF_COLOR, "hint": "Đang mở camera..."}
-        return {**base, "title": "TẮT", "color": OFF_COLOR, "hint": "Bấm Bắt đầu"}
+        return {**base, "title": "TẮT", "color": OFF_COLOR, "hint": "Bấm Bắt đầu để mở camera"}
 
     hud = snap.get("hud") or {}
     state = hud.get("state", "IDLE")
     title, color, hint = STATE_VIEW.get(state, STATE_VIEW["IDLE"])
     progress = float(hud.get("progress") or 0.0)
     if state == "IDLE" and hud.get("reason") == "arming":
-        hint = "Giữ bàn tay mở..."
+        hint = "Giữ tay trong khung hình..."
     if state == "EXECUTE":
         hint = "Chưa gửi phím (đang tập)" if snap.get("dry_run", True) else "Đã gửi phím"
         if not snap.get("dry_run", True):

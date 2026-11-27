@@ -1,0 +1,64 @@
+# Cấu hình THỰC NGHIỆM đề xuất 2026-11-25 (C1-C4 khác nhau thật). Chạy: python -m src --help / thêm --config config_experiment.yaml
+# Khác config.yaml: gru_override, hold_ms, adapt_max_conf, swipe_conf. Lý do: HCI-project/reports/POLICY_PARAM_EXPERIMENTS.md
+# Mọi tham số thí nghiệm nằm ở đây; bản sao được ghi vào dòng đầu của mỗi file log session.
+policy: swipe            # swipe = DEMO (gate lỏng, chỉnh tay) | thực nghiệm C1-C4: fixed | adaptive | abstain | combined
+                         # | naive (không gate) | adaptive_speed (adaptive cũ theo tốc độ tay)
+recognizer: hybrid       # hybrid (GRU vuốt + luật tư thế) | gru | rule (chỉ tư thế tĩnh, không chuyển slide được)
+gru_model_dir: models/gru  # copy gru.keras, gru.labels.json, gru.meta.json từ HCI-project/models/
+gru_flip_x: true           # camera lật gương, dữ liệu Jester không lật -> lật lại x cho GRU
+gru_override: 0.60         # thấp hơn ngưỡng gate để C2/C3/C4 thấy được cú vuốt lưng chừng (0.60-0.80)
+static_max_speed: 1.5      # hybrid: tay di chuyển nhanh hơn mức này thì không nhận tư thế lệnh tĩnh
+camera_index: 0
+preview_width: 480       # độ rộng cửa sổ camera (px)
+preview_topmost: true    # luôn nổi trên cùng, để thấy HUD khi PowerPoint đang toàn màn hình (false nếu che slide)
+status_every_s: 5  
+dry_run: true            # true: chỉ ghi phím định gửi, không gửi thật
+log_dir: sessions
+
+window_ms: 150           # cửa sổ làm mượt đặc trưng
+require_arm: false       # C1-C4 có cần nắm tay ARM trước không (naive/swipe luôn không cần)
+arm_hold_ms: 300         # giữ cử chỉ ARM bao lâu để vào ARMED
+armed_timeout_ms: 4000   # ARMED tự hết hạn
+conf: 0.70               # ngưỡng chung của gate, áp cả cho thumb up/down (luật hình học chỉ đạt ~0.86) -> để 0.7; vuốt dùng max(conf, gru_override)
+command_hold_ms:         # tư thế tĩnh phải giữ bao lâu (policy swipe và các policy có ARM)
+  start_show: 600        # thumb up: vào trình chiếu
+  exit_show: 600         # thumb down: thoát trình chiếu
+  play_pause: 500        # mở bàn tay (đang tắt ở disabled_commands)
+confirm_commands: []     # không lệnh nào cần bước xác nhận nữa
+confirm_hold_ms: 400     # giữ like bao lâu thì xác nhận
+confirm_timeout_ms: 5000 # không like/dislike trong ngần này thì về IDLE
+hold_ms: 250             # đỉnh GRU thật ~300 ms: giữ >= 330 làm sót (session 23:23: 9 -> 4 next)
+swipe_hold_ms: 0         # policy swipe: 0 = nhận ngay khi GRU báo vuốt (đỉnh GRU chỉ dài ~300 ms). Lỗi nhiều -> 100-200
+presence_arm_ms: -1   # policy swipe: tay phải hiện liên tục ngần này ms mới ARMED; mất tay thì về IDLE
+disabled_commands: [play_pause]  # mở bàn tay = Space = sang slide trong PowerPoint -> dễ nhảy slide khi nói; tắt
+cooldown_ms: 800         # nghỉ sau mỗi lệnh. Một cú vuốt bị tính 2 lần -> tăng lên 1000-1500
+reverse_block_ms: 2500   # sau một cú vuốt, bỏ qua chiều ngược trong ngần này (nhịp đưa tay về bị đọc thành lệnh ngược); 0 = tắt
+margin: 0.25             # abstain/combined: chênh lệch top-1/top-2 tối thiểu
+uncertain_floor: 0.40    # dưới mức này coi như không phải lệnh (không vào trạng thái chưa chắc)
+
+# C2 adaptive / C4 combined: ngưỡng = conf + margin_weight*(1-margin) + stability_weight*(1-ổn định), kẹp [min, max]
+# (cùng công thức + tham số mặc định với HCI-project/src/policies.py)
+adapt_min_conf: 0.70
+adapt_max_conf: 0.99
+swipe_conf: 0.80         # ngưỡng gốc riêng cho vuốt, tách khỏi conf của thumb up/down
+margin_weight: 0.20
+stability_weight: 0.15
+stability_window_ms: 800
+
+# C3 abstain / C4 combined: còn nghi ngờ thì quan sát thêm, hết hạn vẫn không rõ thì từ chối
+abstain_wait_ms: 600     # thời gian quan sát thêm tối đa
+clear_conf: 0.90         # qua ngưỡng nhưng dưới mức này = "chưa rõ", phải quan sát thêm
+conflict_floor: 0.50     # chiều vuốt ngược có p >= mức này trong conflict_window_ms = mâu thuẫn hướng
+conflict_window_ms: 700
+
+speed_floor: 0.6         # adaptive_speed (adaptive cũ theo tốc độ tay)
+speed_gain: 0.08
+max_boost: 0.15
+hold_gain: 0.25
+
+keymap:                  # gesture_to_slide_action
+  next: right
+  previous: left
+  start_show: shift+f5   # chiếu từ slide đang mở (f5 = chiếu từ đầu)
+  exit_show: esc
+  play_pause: space

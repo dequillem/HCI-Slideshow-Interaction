@@ -3,5 +3,6 @@ mediapipe==0.10.21
 numpy>=1.26
 pynput>=1.7
 PyYAML>=6.0
+pillow>=10           # giao diện: vẽ hình khử răng cưa (src/ui/render.py)
 # Chỉ cần khi recognizer = gru | hybrid (ghim cùng bản với repo train HCI-project)
 tensorflow==2.16.2

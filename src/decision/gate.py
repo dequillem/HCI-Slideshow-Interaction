@@ -20,6 +20,7 @@ Abstention (abstain/combined): khi cử chỉ đã giữ đủ lâu mà còn "ng
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 
 from ..config import Config
 from ..datatypes import (ACCEPT, ARM_LABEL, ARMED, COMMAND, CONFIRM, CONFIRM_NO, CONFIRM_YES, COOLDOWN, EXECUTE, IDLE, REJECT, UNCERTAIN,
@@ -33,6 +34,7 @@ class IntentGate:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.policy = get_policy(cfg.policy)
+        self.swipe_cfg = replace(cfg, conf=cfg.swipe_conf) if cfg.swipe_conf > 0 else cfg  # ngưỡng riêng cho vuốt
         self.state = IDLE
         self.arm_start = None
         self.armed_refresh = 0
@@ -40,6 +42,7 @@ class IntentGate:
         self.need_release = False
         self.cand = None            # từ teammate: GestureGate.history (nhưng theo thời gian, không đếm khung)
         self.cand_start = 0
+        self.cand_last = 0          # khung hợp lệ gần nhất của ứng viên (grace_ms)
         self.confirm_start = 0
         self.cooldown_until = 0     # từ teammate: GestureGate.cooldown (nhưng theo ms)
         self.last_swipe = (None, -10**9)  # (lệnh vuốt gần nhất, thời điểm) để chặn nhịp đưa tay về
@@ -89,7 +92,14 @@ class IntentGate:
 
     def _reset_candidate(self):
         self.cand, self.doubt_start = None, None
-        self.run.clear()
+        self._clear_run()
+
+    def _clear_run(self):
+        if self.cfg.stability_reset:
+            self.run.clear()
+
+    def _in_grace(self, t):
+        return self.cand is not None and self.state == COMMAND and t - self.cand_last <= self.cfg.grace_ms
 
     # ---------- xác nhận (giữ lại cho confirm_commands) ----------
     def _confirm(self, t, hyp, g, out):
@@ -135,7 +145,7 @@ class IntentGate:
         t = fw.t_ms
         conf = hyp.probs.get(hyp.label, 0.0)
         stability, has_history = self._stability(t, hyp.label)
-        g = self.policy(self.cfg, Context(t, fw.speed, hyp.margin, stability, has_history))
+        g = self.policy(self.swipe_cfg if hyp.command in OPPOSITE else self.cfg, Context(t, fw.speed, hyp.margin, stability, has_history))
 
         def out(verdict, reason, cmd=None, progress=0.0):
             return Decision(t, verdict, cmd, reason, self.state, progress, hyp.label, round(conf, 4))
@@ -201,6 +211,7 @@ class IntentGate:
             self.state = ARMED
             return out(REJECT, "armed")
         cmd = hyp.command
+        raw_cmd = cmd
         if cmd in self.cfg.disabled_commands:
             cmd = None
         if cmd != self.released:
@@ -210,21 +221,25 @@ class IntentGate:
         if cmd in OPPOSITE and self.last_swipe[0] == OPPOSITE[cmd] and t - self.last_swipe[1] < self.cfg.reverse_block_ms:
             cmd = None  # vuốt phải xong tay đưa về bên trái -> GRU đọc thành previous; bỏ qua chiều ngược trong một lúc
         if cmd is None or conf < self.cfg.uncertain_floor:
+            if (raw_cmd is None or cmd is not None) and self._in_grace(t):
+                return out(REJECT, "grace", self.cand)
             self._reset_candidate()
             self.state = ARMED
             return out(REJECT, "no_command")
         weak = conf < g.min_conf or hyp.margin < g.min_margin
         if weak and not g.abstain:
+            if self._in_grace(t):
+                return out(REJECT, "grace", self.cand)
             self._reset_candidate()
             self.state = ARMED
             return out(REJECT, "low_conf" if conf < g.min_conf else "low_margin", cmd)
         if weak:
-            self.run.clear()             # khung dưới ngưỡng không hợp lệ (giống HCI-project: xóa history)
+            self._clear_run()            # khung dưới ngưỡng không hợp lệ (giống HCI-project: xóa history)
         else:
             self.run.append((t, hyp.label))
         if self.cand != cmd:
             self.cand, self.cand_start, self.doubt_start = cmd, t, None
-        self.state = COMMAND
+        self.state, self.cand_last = COMMAND, t
         hold = g.hold_ms
         if self.cfg.policy != "naive":   # naive giữ nguyên là mốc "không gate"
             hold = max(hold, self.cfg.command_hold_ms.get(cmd, 0))
